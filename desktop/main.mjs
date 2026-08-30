@@ -13,6 +13,8 @@ import {
   utilityProcess,
 } from 'electron';
 
+import { listOdbcSources, runOdbcQuery } from './odbc-bridge.mjs';
+
 const HOST = '127.0.0.1';
 const PORT = 4173;
 const APP_ORIGIN = `http://${HOST}:${PORT}`;
@@ -26,6 +28,7 @@ let serverExitCode = null;
 let expectedServerExit = false;
 let quitting = false;
 let restartPromise = null;
+let odbcQueryPromise = null;
 let logPath = '';
 let failureMessage = 'The local runtime has not started yet.';
 const serverTail = [];
@@ -238,6 +241,13 @@ function isApplicationUrl(rawUrl) {
   }
 }
 
+function assertTrustedApplicationIpc(event) {
+  const senderUrl = event.senderFrame?.url ?? event.sender.getURL();
+  if (!isApplicationUrl(senderUrl)) {
+    throw new Error('The connector request did not come from Pivora.');
+  }
+}
+
 function secureWebContents(webContents) {
   webContents.setWindowOpenHandler(({ url }) => {
     const external = safeExternalUrl(url);
@@ -302,9 +312,15 @@ async function startAndLoad() {
     await startRuntime();
     await window.loadURL(APP_ORIGIN);
     if (smokeMode) {
+      const odbc = await listOdbcSources();
       writeSmokeResult({
         ok: true,
         title: window.webContents.getTitle(),
+        odbc: {
+          available: odbc.available === true,
+          driverCount: odbc.drivers?.length ?? 0,
+          sourceCount: odbc.sources?.length ?? 0,
+        },
       });
       quitting = true;
       app.quit();
@@ -366,6 +382,20 @@ if (!hasSingleInstanceLock) {
           restartPromise = null;
         });
         return restartPromise;
+      });
+      ipcMain.handle('pivora:odbc-sources', (event) => {
+        assertTrustedApplicationIpc(event);
+        return listOdbcSources();
+      });
+      ipcMain.handle('pivora:odbc-query', (event, request) => {
+        assertTrustedApplicationIpc(event);
+        if (odbcQueryPromise) {
+          throw new Error('An ODBC query is already running.');
+        }
+        odbcQueryPromise = runOdbcQuery(request).finally(() => {
+          odbcQueryPromise = null;
+        });
+        return odbcQueryPromise;
       });
 
       createWindow();

@@ -5,6 +5,43 @@ import { makeTable } from './bi-model';
 import type { DataTable, SourceKind } from './bi-types';
 
 const MAX_ROWS = 250_000;
+const SUPPORTED_EXTENSIONS = new Set([
+  'csv',
+  'json',
+  'xml',
+  'parquet',
+  'xlsx',
+  'xls',
+  'xlsm',
+  'sqlite',
+  'sqlite3',
+  'db',
+]);
+
+function extensionOf(name: string): string {
+  const extension = name.split('.').at(-1)?.toLowerCase() ?? '';
+  return SUPPORTED_EXTENSIONS.has(extension) ? extension : '';
+}
+
+function extensionForContentType(contentType: string): string {
+  const normalized = contentType.toLowerCase();
+  if (normalized.includes('parquet')) return 'parquet';
+  if (normalized.includes('spreadsheetml') || normalized.includes('ms-excel')) {
+    return 'xlsx';
+  }
+  if (normalized.includes('sqlite')) return 'sqlite';
+  if (normalized.includes('json')) return 'json';
+  if (normalized.includes('xml')) return 'xml';
+  if (normalized.includes('csv')) return 'csv';
+  return '';
+}
+
+function detectedTextExtension(bytes: ArrayBuffer): string {
+  const preview = new TextDecoder().decode(bytes.slice(0, 4_096)).trimStart();
+  if (/^[{[]/u.test(preview)) return 'json';
+  if (preview.startsWith('<')) return 'xml';
+  return 'csv';
+}
 
 function limitRows(rows: Record<string, unknown>[]) {
   return {
@@ -162,4 +199,27 @@ export async function parseDataFile(file: File): Promise<DataTable[]> {
   throw new Error(
     'Supported formats: CSV, JSON, XML, Parquet, Excel, and SQLite.',
   );
+}
+
+export async function responseToDataFile(
+  response: Response,
+  sourceUrl: URL,
+  preferredName = '',
+): Promise<File> {
+  const bytes = await response.arrayBuffer();
+  const pathName = decodeURIComponent(
+    sourceUrl.pathname.split('/').filter(Boolean).at(-1) ?? 'web-data',
+  );
+  const extension =
+    extensionOf(preferredName) ||
+    extensionOf(pathName) ||
+    extensionForContentType(response.headers.get('content-type') ?? '') ||
+    detectedTextExtension(bytes);
+  const baseName = preferredName.trim() || pathName.replace(/\.[^.]+$/u, '');
+  const fileName = extensionOf(baseName)
+    ? baseName
+    : `${baseName || 'web-data'}.${extension}`;
+  return new File([bytes], fileName, {
+    type: response.headers.get('content-type') ?? '',
+  });
 }

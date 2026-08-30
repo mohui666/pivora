@@ -5,7 +5,7 @@ import test from 'node:test';
 import * as XLSX from 'xlsx';
 import { parquetWriteBuffer } from 'hyparquet-writer';
 
-import { parseDataFile } from './data-import';
+import { parseDataFile, responseToDataFile } from './data-import';
 
 void test('imports CSV and JSON collections as normalized local tables', async () => {
   const csv = new NodeFile(
@@ -67,4 +67,22 @@ void test('imports local Parquet rows with numeric and text columns', async () =
   assert.equal(table.sourceKind, 'parquet');
   assert.equal(table.rows.length, 2);
   assert.deepEqual(table.rows[0], { region: 'North', revenue: 1200 });
+});
+
+void test('preserves remote binary formats instead of coercing them to text', async () => {
+  const bytes = parquetWriteBuffer({
+    columnData: [{ name: 'revenue', data: [12, 18], type: 'INT32' }],
+  });
+  const response = new Response(new Uint8Array(bytes), {
+    headers: { 'content-type': 'application/vnd.apache.parquet' },
+  });
+  const file = await responseToDataFile(
+    response,
+    new URL('https://lake.example.test/facts.parquet'),
+    'Remote facts',
+  );
+  const [table] = await parseDataFile(file);
+
+  assert.equal(file.name, 'Remote facts.parquet');
+  assert.deepEqual(table.rows, [{ revenue: 12 }, { revenue: 18 }]);
 });

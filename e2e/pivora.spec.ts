@@ -169,3 +169,113 @@ test('imports tables, switches data, authors a freeform visual, and exports a re
   ).toBe(false);
   expect(pageErrors).toEqual([]);
 });
+
+test('imports a data lake manifest and a desktop ODBC query', async ({
+  page,
+}) => {
+  const pageErrors = capturePageErrors(page);
+  await page.addInitScript(() => {
+    window.pivoraDesktop = {
+      platform: 'win32',
+      listOdbcSources: async () => ({
+        available: true,
+        drivers: [{ name: 'Warehouse Driver', platform: '64-bit' }],
+        sources: [
+          {
+            name: 'Warehouse DSN',
+            driver: 'Warehouse Driver',
+            type: 'User',
+            platform: '64-bit',
+          },
+        ],
+      }),
+      runOdbcQuery: async (request) => {
+        if (request.connectionString !== 'DSN={Warehouse DSN};') {
+          throw new Error('Unexpected ODBC connection string.');
+        }
+        if (!request.query.startsWith('SELECT')) {
+          throw new Error('Unexpected ODBC query.');
+        }
+        return {
+          columns: ['region', 'revenue'],
+          rows: [
+            { region: 'North', revenue: 220 },
+            { region: 'South', revenue: 180 },
+          ],
+          truncated: false,
+          durationMs: 12.5,
+          driver: 'Warehouse Driver',
+          dataSource: 'Warehouse DSN',
+          database: 'Analytics',
+        };
+      },
+      retryRuntime: async () => ({ ok: true }),
+      runtimeStatus: async () => ({
+        message: 'Ready',
+        logPath: '',
+        running: true,
+      }),
+    };
+  });
+  await page.route('https://lake.example.test/manifest.json', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        objects: [
+          {
+            url: 'https://lake.example.test/curated/facts.csv?temporary=session',
+          },
+        ],
+      }),
+    });
+  });
+  await page.route(
+    'https://lake.example.test/curated/facts.csv?temporary=session',
+    async (route) => {
+      await route.fulfill({
+        contentType: 'text/csv',
+        body: 'region,revenue\nEast,90\nWest,110\n',
+      });
+    },
+  );
+  await openBlankWorkspace(page);
+
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  const connectors = page.getByRole('dialog', { name: 'Data connectors' });
+  await expect(connectors).toBeVisible();
+  await connectors.getByRole('button', { name: 'Data lake' }).click();
+  await page.getByLabel('Data lake provider').selectOption('manifest');
+  await page
+    .getByLabel('Data lake endpoint')
+    .fill('https://lake.example.test/manifest.json');
+  await page.getByRole('button', { name: 'Discover objects' }).click();
+  await expect(page.getByText('curated/facts.csv')).toBeVisible();
+  await page.getByRole('button', { name: 'Import selected (1)' }).click();
+  await expect(page.locator('.notice')).toContainText(
+    'Imported 1 data lake table(s), 2 rows.',
+  );
+
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Data connectors' })
+    .getByRole('button', { name: 'ODBC', exact: true })
+    .click();
+  await expect(page.getByLabel('ODBC data source')).toHaveValue(
+    'Warehouse DSN',
+  );
+  await page.getByLabel('ODBC imported table name').fill('Warehouse live');
+  await page
+    .getByLabel('ODBC SQL query')
+    .fill('SELECT region, revenue FROM warehouse_facts');
+  await page.getByRole('button', { name: 'Run & import' }).click();
+  await expect(page.locator('.notice')).toContainText(
+    'Imported ODBC table with 2 rows',
+  );
+
+  await page.getByRole('button', { name: 'Data & clean' }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Warehouse live' }),
+  ).toBeVisible();
+  await expect(page.locator('.data-table tbody tr')).toHaveCount(2);
+  expect(pageErrors).toEqual([]);
+});

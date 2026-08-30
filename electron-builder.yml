@@ -8,20 +8,21 @@ directories:
   buildResources: desktop/assets
 files:
   - desktop/main.mjs
+  - desktop/odbc-bridge.mjs
   - desktop/preload.cjs
   - desktop/runtime-runner.cjs
   - desktop/error.html
   - package.json
-  - "!node_modules/**/*"
+  - '!node_modules/**/*'
 extraResources:
   - from: dist
     to: dist
     filter:
-      - "**/*"
+      - '**/*'
   - from: desktop/runtime/node_modules
     to: runtime/node_modules
     filter:
-      - "**/*"
+      - '**/*'
 win:
   icon: icon.png
   target:

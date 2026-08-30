@@ -73,7 +73,10 @@ const result = JSON.parse(readFileSync(resultPath, 'utf8'));
 if (
   result.ok !== true ||
   result.packaged !== true ||
-  !String(result.title).includes('Pivora')
+  !String(result.title).includes('Pivora') ||
+  result.odbc?.available !== true ||
+  !Number.isInteger(result.odbc?.driverCount) ||
+  !Number.isInteger(result.odbc?.sourceCount)
 ) {
   throw new Error(`Desktop smoke result is invalid: ${JSON.stringify(result)}`);
 }

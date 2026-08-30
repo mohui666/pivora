@@ -12,6 +12,8 @@ export type SourceKind =
   | 'xml'
   | 'parquet'
   | 'web'
+  | 'data-lake'
+  | 'odbc'
   | 'sql'
   | 'excel'
   | 'sqlite';

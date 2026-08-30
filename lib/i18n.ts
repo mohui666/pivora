@@ -105,10 +105,22 @@ const ZH_CN_MESSAGES: Record<string, string> = {
   'Search values': '搜索值',
   'Add source': '添加数据源',
   'Add folder': '添加文件夹',
+  Connect: '连接',
   'Web / API': 'Web / API',
+  'Data connectors': '数据连接器',
+  'Close data connectors': '关闭数据连接器',
+  'LOCAL CONNECTOR HUB': '本地连接器中心',
+  'Connect to data': '连接数据',
+  'Credentials and request headers remain in this session. Only imported rows become part of the report.':
+    '凭据和请求标头只保留在当前会话中，只有导入的数据行会成为报表的一部分。',
+  'Connector type': '连接器类型',
+  'Data lake': '数据湖',
+  ODBC: 'ODBC',
   'Web & API connector': 'Web 与 API 连接器',
   'Explicit browser GET for JSON, CSV, or XML endpoints':
     '通过浏览器显式 GET JSON、CSV 或 XML 端点',
+  'Binary-safe GET for CSV, JSON, XML, Parquet, Excel, and SQLite endpoints':
+    '以二进制安全方式 GET CSV、JSON、XML、Parquet、Excel 和 SQLite 端点',
   'Source URL': '数据源 URL',
   'Table name': '表名称',
   'Optional friendly name': '可选的友好名称',
@@ -117,6 +129,83 @@ const ZH_CN_MESSAGES: Record<string, string> = {
   'Headers are never saved in the report. The endpoint must allow browser CORS; fetched rows stay in this local model.':
     '请求标头不会保存到报表。端点必须允许浏览器 CORS；获取的数据行只保留在本地模型中。',
   'Fetch source': '获取数据源',
+  'Object storage & data lake': '对象存储与数据湖',
+  'Discover supported objects with provider pagination, then import an explicit selection':
+    '通过提供商分页发现支持的对象，然后明确选择要导入的内容',
+  Provider: '提供商',
+  'Data lake provider': '数据湖提供商',
+  'Amazon S3 / compatible': 'Amazon S3 / 兼容存储',
+  'Azure Blob Storage': 'Azure Blob 存储',
+  'Google Cloud Storage': 'Google Cloud Storage',
+  'URL manifest': 'URL 清单',
+  'Bucket or gs:// path': '存储桶或 gs:// 路径',
+  'Bucket URL': '存储桶 URL',
+  'Manifest URL': '清单 URL',
+  'Container URL': '容器 URL',
+  'Data lake endpoint': '数据湖端点',
+  'Object prefix': '对象前缀',
+  'Data lake object prefix': '数据湖对象前缀',
+  'Discovery limit': '发现数量上限',
+  'Data lake discovery limit': '数据湖发现数量上限',
+  'Data lake request headers': '数据湖请求标头',
+  'Supports public/CORS endpoints, bearer headers, Azure SAS, and manifests containing per-object presigned URLs.':
+    '支持公开或 CORS 端点、Bearer 标头、Azure SAS，以及包含逐对象预签名 URL 的清单。',
+  'Discover objects': '发现对象',
+  'Import selection': '导入所选对象',
+  'No supported data objects were discovered.': '未发现支持的数据对象。',
+  'Select at least one data lake object.': '请至少选择一个数据湖对象。',
+  'Data lake discovery failed.': '数据湖发现失败。',
+  'Data lake import failed.': '数据湖导入失败。',
+  'Unknown size': '大小未知',
+  'Windows ODBC bridge': 'Windows ODBC 桥接',
+  'Execute one guarded SELECT/WITH query through an installed 64-bit ODBC driver':
+    '通过已安装的 64 位 ODBC 驱动执行一条受保护的 SELECT/WITH 查询',
+  'Desktop bridge ready': '桌面桥接已就绪',
+  'Desktop required': '需要桌面版',
+  'Installed data source': '已安装的数据源',
+  'ODBC data source': 'ODBC 数据源',
+  'Manual connection string': '手动连接字符串',
+  'Session-only connection string': '仅本次会话使用的连接字符串',
+  'ODBC connection string': 'ODBC 连接字符串',
+  'Optional override for the selected DSN': '可选：覆盖所选 DSN',
+  'Show ODBC connection string': '显示 ODBC 连接字符串',
+  'Hide ODBC connection string': '隐藏 ODBC 连接字符串',
+  'Imported table name': '导入后的表名',
+  'ODBC imported table name': 'ODBC 导入表名',
+  'Row limit': '行数上限',
+  'ODBC row limit': 'ODBC 行数上限',
+  'Read-only SQL query': '只读 SQL 查询',
+  'ODBC SQL query': 'ODBC SQL 查询',
+  'Discovering installed data sources…': '正在发现已安装的数据源…',
+  'Refresh DSNs': '刷新 DSN',
+  'Run & import': '运行并导入',
+  'ODBC import requires the Pivora Windows desktop app.':
+    'ODBC 导入需要使用 Pivora Windows 桌面应用。',
+  'ODBC source discovery failed.': 'ODBC 数据源发现失败。',
+  'Enter an ODBC connection string.': '请输入 ODBC 连接字符串。',
+  'ODBC query import failed.': 'ODBC 查询导入失败。',
+  'Enter an ODBC SQL query.': '请输入 ODBC SQL 查询。',
+  'The ODBC SQL query exceeds 16,000 characters.':
+    'ODBC SQL 查询超过 16,000 个字符。',
+  'The ODBC request is invalid.': 'ODBC 请求无效。',
+  'The ODBC connection string exceeds 4,096 characters.':
+    'ODBC 连接字符串超过 4,096 个字符。',
+  'Run one read-only ODBC statement at a time.':
+    '每次只能运行一条只读 ODBC 语句。',
+  'The ODBC bridge accepts SELECT and WITH queries only.':
+    'ODBC 桥接仅接受 SELECT 和 WITH 查询。',
+  'The ODBC bridge rejected a write-capable SQL keyword.':
+    'ODBC 桥接拒绝了具有写入能力的 SQL 关键字。',
+  'The ODBC query contains an unterminated SQL literal or comment.':
+    'ODBC 查询包含未结束的 SQL 字面量或注释。',
+  'An ODBC query is already running.': '已有一条 ODBC 查询正在运行。',
+  'The ODBC bridge timed out.': 'ODBC 桥接执行超时。',
+  'The ODBC bridge result exceeded 64 MB.': 'ODBC 桥接结果超过 64 MB。',
+  'The ODBC bridge returned an invalid response.': 'ODBC 桥接返回了无效响应。',
+  'The connector request did not come from Pivora.':
+    '连接器请求并非来自 Pivora。',
+  'data-lake': '数据湖',
+  odbc: 'ODBC',
   'Applied query steps': '已应用的查询步骤',
   'Build an ordered, repeatable preparation pipeline without changing the source.':
     '构建有序、可重复的数据准备管道，同时不修改原始数据。',
@@ -600,6 +689,49 @@ const ZH_CN_PATTERNS: ReadonlyArray<[RegExp, (...groups: string[]) => string]> =
     [
       /^Fetched (\d+) web table\(s\), ([\d,.]+) rows\.$/u,
       (tables, rows) => `已获取 ${tables} 个 Web 表、${rows} 行数据。`,
+    ],
+    [
+      /^Discovered (\d+) supported object\(s\) from (\d+) scanned( · result limit reached)?\.$/u,
+      (objects, scanned, limited) =>
+        `已从 ${scanned} 个扫描对象中发现 ${objects} 个支持的对象${limited ? ' · 已达到结果上限' : ''}。`,
+    ],
+    [
+      /^Importing data lake object (\d+) of (\d+)…$/u,
+      (current, total) => `正在导入数据湖对象 ${current}/${total}…`,
+    ],
+    [
+      /^Imported (\d+) data lake table\(s\), ([\d,.]+) rows\.$/u,
+      (tables, rows) => `已导入 ${tables} 个数据湖表、${rows} 行数据。`,
+    ],
+    [
+      /^Imported ODBC table with ([\d,.]+) rows in ([\d,.]+) ms( · result limit reached)?\.$/u,
+      (rows, duration, limited) =>
+        `已通过 ODBC 导入 ${rows} 行，耗时 ${duration} 毫秒${limited ? ' · 已达到结果上限' : ''}。`,
+    ],
+    [
+      /^(\d+) DSN\(s\) · (\d+) installed driver\(s\)\. Connection details and SQL are never saved\.$/u,
+      (sources, drivers) =>
+        `${sources} 个 DSN · ${drivers} 个已安装驱动。连接信息和 SQL 永远不会保存。`,
+    ],
+    [
+      /^(S3 object listing|Azure Blob listing|Google Cloud Storage listing|Data lake manifest) returned HTTP (\d+)\.$/u,
+      (activity, status) =>
+        `${
+          {
+            'S3 object listing': 'S3 对象列表',
+            'Azure Blob listing': 'Azure Blob 列表',
+            'Google Cloud Storage listing': 'Google Cloud Storage 列表',
+            'Data lake manifest': '数据湖清单',
+          }[activity] ?? activity
+        } 返回 HTTP ${status}。`,
+    ],
+    [
+      /^Data lake object “(.+)” returned HTTP (\d+)\.$/u,
+      (name, status) => `数据湖对象“${name}”返回 HTTP ${status}。`,
+    ],
+    [
+      /^Data lake object “(.+)” exceeds 512 MB\.$/u,
+      (name) => `数据湖对象“${name}”超过 512 MB。`,
     ],
     [/^(\d[\d,.]*) materialized rows ·$/u, (count) => `${count} 行已具体化 ·`],
     [/^(\d[\d,.]*) rows ·$/u, (count) => `${count} 行 ·`],

@@ -1364,16 +1364,82 @@
   opacity: 0.55;
 }
 
-.web-connector-panel {
+.connector-dialog-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
   display: grid;
-  grid-template-columns: minmax(15rem, 1.2fr) minmax(10rem, 0.65fr) minmax(
-      15rem,
-      1fr
-    );
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  place-items: center;
+  background: rgb(15 23 42 / 48%);
+  padding: 1.25rem;
+  backdrop-filter: blur(8px);
+}
+.connector-dialog {
+  width: min(72rem, 96vw);
+  max-height: min(54rem, 92vh);
+  overflow: auto;
+  border: 1px solid color-mix(in oklab, var(--primary) 24%, var(--border));
+  border-radius: 1rem;
+  background: var(--background);
+  box-shadow: 0 28px 90px rgb(15 23 42 / 28%);
+}
+.connector-dialog > header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklab, var(--background) 94%, transparent);
+  padding: 1rem 1.1rem 0.85rem;
+  backdrop-filter: blur(14px);
+}
+.connector-dialog > header h2 {
+  margin-top: 0.15rem;
+  font-size: 1.25rem;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+}
+.connector-dialog > header p {
+  margin-top: 0.2rem;
+  color: var(--muted-foreground);
+  font-size: 0.66rem;
+}
+.connector-tabs {
+  display: flex;
+  gap: 0.3rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.55rem 0.8rem;
+}
+.connector-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  border-radius: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 680;
+}
+.connector-tabs button:hover,
+.connector-tabs button.active {
+  background: var(--muted);
+  color: var(--primary);
+}
+.connector-tabs svg {
+  width: 0.82rem;
+}
+.connector-panel {
+  display: grid;
   gap: 0.75rem;
-  margin-bottom: 1rem;
-  border: 1px solid color-mix(in oklab, var(--primary) 28%, var(--border));
-  border-radius: 0.85rem;
   background:
     linear-gradient(
       135deg,
@@ -1381,16 +1447,22 @@
       transparent 48%
     ),
     var(--card);
-  padding: 0.85rem;
+  padding: 0 1rem 1rem;
 }
-.web-connector-panel > .panel-title,
+.web-connector-panel {
+  grid-template-columns: minmax(15rem, 1.2fr) minmax(10rem, 0.65fr) minmax(
+      15rem,
+      1fr
+    );
+}
+.connector-panel > .panel-title,
 .web-connector-actions {
   grid-column: 1 / -1;
 }
-.web-connector-panel > .panel-title {
-  margin: -0.85rem -0.85rem 0;
+.connector-panel > .panel-title {
+  margin: 0 -1rem;
 }
-.web-connector-panel > label {
+.connector-panel > label {
   display: grid;
   align-content: start;
   gap: 0.3rem;
@@ -1413,6 +1485,131 @@
   color: var(--muted-foreground);
   font-size: 0.61rem;
   line-height: 1.5;
+}
+.connector-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.data-lake-connector-panel {
+  grid-template-columns: 12rem minmax(16rem, 1fr) minmax(12rem, 0.7fr) 8rem;
+}
+.data-lake-header-field {
+  grid-column: 1 / -1;
+}
+.data-lake-header-field textarea,
+.odbc-query-field textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+.connector-discovery-actions,
+.odbc-connector-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+.connector-discovery-actions p,
+.odbc-connector-actions p {
+  min-width: 0;
+  flex: 1;
+  color: var(--muted-foreground);
+  font-size: 0.61rem;
+  line-height: 1.5;
+}
+.connector-object-browser {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--background);
+}
+.connector-object-browser > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 0.75rem;
+}
+.connector-object-browser strong,
+.connector-object-browser small {
+  display: block;
+}
+.connector-object-browser strong {
+  font-size: 0.67rem;
+}
+.connector-object-browser small,
+.connector-object-list > p {
+  color: var(--muted-foreground);
+  font-size: 0.58rem;
+}
+.connector-object-list {
+  max-height: 15rem;
+  overflow: auto;
+  padding: 0.25rem 0.7rem;
+}
+.connector-object-list > label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.1rem;
+}
+.connector-object-list > label:last-child {
+  border-bottom: 0;
+}
+.connector-object-list > label span {
+  min-width: 0;
+}
+.connector-object-list > label strong,
+.connector-object-list > label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connector-object-list > p {
+  padding: 1.2rem 0;
+  text-align: center;
+}
+.odbc-connector-panel {
+  grid-template-columns: minmax(16rem, 1fr) minmax(18rem, 1.25fr) minmax(
+      11rem,
+      0.65fr
+    ) 8rem;
+}
+.odbc-connector-panel > .panel-title {
+  position: relative;
+}
+.odbc-connector-panel > .panel-title > [data-slot='badge'] {
+  margin-left: auto;
+}
+.odbc-connection-field > span {
+  position: relative;
+  display: block;
+}
+.odbc-connection-field input {
+  width: 100%;
+  padding-right: 2.1rem;
+}
+.odbc-connection-field button {
+  position: absolute;
+  right: 0.55rem;
+  top: 50%;
+  display: grid;
+  width: 1rem;
+  place-items: center;
+  color: var(--muted-foreground);
+  transform: translateY(-50%);
+}
+.odbc-connection-field button svg {
+  width: 0.78rem;
+}
+.odbc-query-field {
+  grid-column: 1 / -1;
 }
 .data-prep-grid {
   display: grid;
@@ -2531,11 +2728,32 @@
   .data-prep-grid {
     grid-template-columns: 1fr;
   }
-  .web-connector-panel {
+  .web-connector-panel,
+  .data-lake-connector-panel,
+  .odbc-connector-panel {
     grid-template-columns: 1fr;
+  }
+  .connector-panel > label,
+  .connector-panel > div {
+    grid-column: auto;
   }
   .web-connector-actions {
     align-items: flex-start;
+    flex-direction: column;
+  }
+  .connector-dialog-backdrop {
+    padding: 0.5rem;
+  }
+  .connector-dialog {
+    width: 100%;
+    max-height: 96vh;
+  }
+  .connector-tabs {
+    overflow-x: auto;
+  }
+  .connector-discovery-actions,
+  .odbc-connector-actions {
+    align-items: stretch;
     flex-direction: column;
   }
   .field-clean-list,

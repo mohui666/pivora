@@ -6,7 +6,9 @@ import {
   Activity,
   BookmarkPlus,
   BookOpen,
+  Cable,
   Calculator,
+  CloudDownload,
   Copy,
   Database,
   FileDown,
@@ -38,6 +40,8 @@ import {
   Trash2,
   Undo2,
   Upload,
+  Eye,
+  EyeOff,
   X,
 } from 'lucide-react';
 import {
@@ -69,6 +73,7 @@ import {
   applyQuickCalculation,
   type Aggregation,
   inferFields,
+  normalizeRows,
   profileColumn,
   type QuickCalculation,
   sortAggregatedPointsByColumn,
@@ -106,6 +111,11 @@ import type {
   RoleRule,
   SemanticMeasure,
 } from '@/lib/bi-types';
+import type { DataLakeObject, DataLakeProvider } from '@/lib/data-lake';
+import {
+  getDesktopBridge,
+  type OdbcSourceDiscovery,
+} from '@/lib/desktop-bridge';
 import {
   convertWidgetLayoutMode,
   DASHBOARD_GRID_MODES,
@@ -154,6 +164,29 @@ const FREEFORM_ORIGIN_CONSTRAINT: LayoutConstraint = {
 const FREEFORM_CONSTRAINTS = [FREEFORM_ORIGIN_CONSTRAINT, minMaxSize];
 
 const AUTO_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+
+function formatBytes(value: number | undefined): string {
+  if (!Number.isFinite(value)) return 'Unknown size';
+  const bytes = Math.max(0, value ?? 0);
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 ** 2) return `${(bytes / 1_024).toFixed(1)} KB`;
+  if (bytes < 1_024 ** 3) return `${(bytes / 1_024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1_024 ** 3).toFixed(1)} GB`;
+}
+
+function odbcDsnConnectionString(name: string): string {
+  return `DSN={${name.replaceAll('}', '}}')}};`;
+}
+
+function objectNameForTable(key: string): string {
+  return (
+    key
+      .split('/')
+      .filter(Boolean)
+      .at(-1)
+      ?.replace(/\.[^.]+$/u, '') || 'Data lake object'
+  );
+}
 
 const ChartVisual = lazy(async () => {
   const chartModule = await import('@/components/bi/chart-visual');
@@ -300,11 +333,36 @@ export default function Home() {
   const [sqlError, setSqlError] = useState('');
   const [sqlRunning, setSqlRunning] = useState(false);
   const [sqlHistory, setSqlHistory] = useState<string[]>([]);
-  const [showWebConnector, setShowWebConnector] = useState(false);
+  const [connectorPanel, setConnectorPanel] = useState<
+    'web' | 'data-lake' | 'odbc' | null
+  >(null);
   const [webUrl, setWebUrl] = useState('');
   const [webTableName, setWebTableName] = useState('');
   const [webHeaders, setWebHeaders] = useState('');
   const [webLoading, setWebLoading] = useState(false);
+  const [dataLakeProvider, setDataLakeProvider] =
+    useState<DataLakeProvider>('s3');
+  const [dataLakeEndpoint, setDataLakeEndpoint] = useState('');
+  const [dataLakePrefix, setDataLakePrefix] = useState('');
+  const [dataLakeHeaders, setDataLakeHeaders] = useState('');
+  const [dataLakeLimit, setDataLakeLimit] = useState(100);
+  const [dataLakeObjects, setDataLakeObjects] = useState<DataLakeObject[]>([]);
+  const [selectedDataLakeObjects, setSelectedDataLakeObjects] = useState<
+    Set<string>
+  >(new Set());
+  const [dataLakeLoading, setDataLakeLoading] = useState(false);
+  const [dataLakeImporting, setDataLakeImporting] = useState(false);
+  const [dataLakeDiscoveryNote, setDataLakeDiscoveryNote] = useState('');
+  const [odbcDiscovery, setOdbcDiscovery] = useState<OdbcSourceDiscovery>();
+  const [odbcLoading, setOdbcLoading] = useState(false);
+  const [odbcQueryRunning, setOdbcQueryRunning] = useState(false);
+  const [odbcDsn, setOdbcDsn] = useState('');
+  const [odbcConnectionString, setOdbcConnectionString] = useState('');
+  const [showOdbcConnectionString, setShowOdbcConnectionString] =
+    useState(false);
+  const [odbcTableName, setOdbcTableName] = useState('ODBC result');
+  const [odbcSql, setOdbcSql] = useState('SELECT * FROM table_name');
+  const [odbcRowLimit, setOdbcRowLimit] = useState(10_000);
   const [filterDraft, setFilterDraft] = useState<
     Pick<ReportFilter, 'tableId' | 'field' | 'operator' | 'value' | 'scope'>
   >({
@@ -1005,6 +1063,85 @@ export default function Home() {
     window.setTimeout(() => setNotice(''), 3600);
   }
 
+  function upsertConnectorTables(imported: DataTable[]) {
+    if (!imported.length) return;
+    const firstExisting = report.tables.find(
+      (table) =>
+        table.sourceName === imported[0]?.sourceName &&
+        table.name === imported[0]?.name,
+    );
+    updateReport((current) => {
+      const keys = new Set(
+        imported.map((table) => `${table.sourceName}\u0000${table.name}`),
+      );
+      const retained = current.tables.filter(
+        (table) => !keys.has(`${table.sourceName}\u0000${table.name}`),
+      );
+      const reconciled = imported.map((table) => {
+        const existing = current.tables.find(
+          (candidate) =>
+            candidate.sourceName === table.sourceName &&
+            candidate.name === table.name,
+        );
+        return existing ? { ...table, id: existing.id } : table;
+      });
+      let widgets = current.widgets;
+      if (!widgets.length && reconciled[0]) {
+        widgets = [
+          defaultWidget(
+            reconciled[0],
+            reconciled[0].rows,
+            0,
+            current.pages[0]?.id ?? 'page_overview',
+            current.columnMetadata,
+          ),
+        ];
+      }
+      return { ...current, tables: [...retained, ...reconciled], widgets };
+    });
+    setActiveTableId(firstExisting?.id ?? imported[0].id);
+  }
+
+  async function openConnector(panel: 'web' | 'data-lake' | 'odbc') {
+    if (!canEdit) return;
+    setConnectorPanel(panel);
+    if (panel !== 'odbc' || odbcDiscovery || odbcLoading) return;
+    await refreshOdbcSources();
+  }
+
+  async function refreshOdbcSources() {
+    const bridge = getDesktopBridge();
+    if (!bridge) {
+      setOdbcDiscovery({
+        available: false,
+        drivers: [],
+        sources: [],
+        message: 'ODBC import requires the Pivora Windows desktop app.',
+      });
+      return;
+    }
+    setOdbcLoading(true);
+    try {
+      const discovery = await bridge.listOdbcSources();
+      setOdbcDiscovery(discovery);
+      if (!odbcDsn && discovery.sources[0]) {
+        setOdbcDsn(discovery.sources[0].name);
+      }
+    } catch (error) {
+      setOdbcDiscovery({
+        available: false,
+        drivers: [],
+        sources: [],
+        message:
+          error instanceof Error
+            ? error.message
+            : 'ODBC source discovery failed.',
+      });
+    } finally {
+      setOdbcLoading(false);
+    }
+  }
+
   function openLibrary() {
     setShowLibrary(true);
     if (!storageReady) return;
@@ -1084,19 +1221,8 @@ export default function Home() {
         throw new Error('Web connectors require an HTTP or HTTPS URL.');
       }
 
-      let headers: Record<string, string> | undefined;
-      if (webHeaders.trim()) {
-        const candidate = JSON.parse(webHeaders) as unknown;
-        if (
-          !candidate ||
-          typeof candidate !== 'object' ||
-          Array.isArray(candidate) ||
-          Object.values(candidate).some((value) => typeof value !== 'string')
-        ) {
-          throw new Error('Request headers must be a JSON object of strings.');
-        }
-        headers = candidate as Record<string, string>;
-      }
+      const { parseSessionHeaders } = await import('@/lib/data-lake');
+      const headers = parseSessionHeaders(webHeaders);
 
       const response = await fetch(parsedUrl, {
         method: 'GET',
@@ -1106,20 +1232,14 @@ export default function Home() {
       if (!response.ok) {
         throw new Error(`Web source returned HTTP ${response.status}.`);
       }
-      const contentType = response.headers.get('content-type') ?? '';
-      const body = await response.text();
-      const trimmed = body.trimStart();
-      const extension =
-        contentType.includes('json') || /^[{[]/.test(trimmed)
-          ? 'json'
-          : contentType.includes('xml') || trimmed.startsWith('<')
-            ? 'xml'
-            : 'csv';
-      const pathName = parsedUrl.pathname.split('/').filter(Boolean).at(-1);
-      const fileName = `${webTableName.trim() || pathName?.replace(/\.[^.]+$/, '') || 'web-data'}.${extension}`;
-      const file = new File([body], fileName, { type: contentType });
+      const dataImport = await import('@/lib/data-import');
+      const file = await dataImport.responseToDataFile(
+        response,
+        parsedUrl,
+        webTableName,
+      );
       const sourceLabel = `${parsedUrl.origin}${parsedUrl.pathname}`;
-      const parsedTables = await parseLocalDataFile(file);
+      const parsedTables = await dataImport.parseDataFile(file);
       const imported = parsedTables.map((table) => ({
         ...table,
         name:
@@ -1151,7 +1271,7 @@ export default function Home() {
         return { ...current, tables: [...retained, ...reconciled] };
       });
       setActiveTableId(firstExisting?.id ?? imported[0]?.id ?? activeTableId);
-      setShowWebConnector(false);
+      setConnectorPanel(null);
       showNotice(
         `Fetched ${imported.length} web table(s), ${imported.reduce((sum, table) => sum + table.rows.length, 0).toLocaleString()} rows.`,
       );
@@ -1161,6 +1281,153 @@ export default function Home() {
       );
     } finally {
       setWebLoading(false);
+    }
+  }
+
+  async function discoverDataLake() {
+    if (!canEdit || !dataLakeEndpoint.trim()) return;
+    setDataLakeLoading(true);
+    setDataLakeDiscoveryNote('');
+    try {
+      const dataLake = await import('@/lib/data-lake');
+      const headers = dataLake.parseSessionHeaders(dataLakeHeaders);
+      const discovery = await dataLake.discoverDataLakeObjects({
+        provider: dataLakeProvider,
+        endpoint: dataLakeEndpoint,
+        prefix: dataLakePrefix.trim(),
+        headers,
+        maxObjects: dataLakeLimit,
+      });
+      setDataLakeObjects(discovery.objects);
+      setSelectedDataLakeObjects(
+        new Set(discovery.objects.map((object) => object.id)),
+      );
+      setDataLakeDiscoveryNote(
+        `Discovered ${discovery.objects.length} supported object(s) from ${discovery.scanned} scanned${discovery.truncated ? ' · result limit reached' : ''}.`,
+      );
+    } catch (error) {
+      setDataLakeObjects([]);
+      setSelectedDataLakeObjects(new Set());
+      setDataLakeDiscoveryNote(
+        error instanceof Error ? error.message : 'Data lake discovery failed.',
+      );
+    } finally {
+      setDataLakeLoading(false);
+    }
+  }
+
+  function toggleDataLakeObject(id: string) {
+    setSelectedDataLakeObjects((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function importDataLakeSelection() {
+    if (!canEdit || dataLakeImporting) return;
+    const selected = dataLakeObjects.filter((object) =>
+      selectedDataLakeObjects.has(object.id),
+    );
+    if (!selected.length)
+      return showNotice('Select at least one data lake object.');
+    setDataLakeImporting(true);
+    try {
+      const [dataLake, dataImport] = await Promise.all([
+        import('@/lib/data-lake'),
+        import('@/lib/data-import'),
+      ]);
+      const headers = dataLake.parseSessionHeaders(dataLakeHeaders);
+      const imported: DataTable[] = [];
+      for (const [index, object] of selected.entries()) {
+        setNotice(
+          `Importing data lake object ${index + 1} of ${selected.length}…`,
+        );
+        const downloaded = await dataLake.downloadDataLakeObject(
+          object,
+          headers,
+        );
+        const fileName = object.key.replaceAll('/', '__');
+        const file =
+          downloaded.name === fileName
+            ? downloaded
+            : new File([downloaded], fileName, { type: downloaded.type });
+        const tables = await dataImport.parseDataFile(file);
+        const sourceName = dataLake.safeDataLakeSourceLabel(object.url);
+        imported.push(
+          ...tables.map((table) => ({
+            ...table,
+            name:
+              tables.length > 1
+                ? `${objectNameForTable(object.key)} · ${table.name}`
+                : objectNameForTable(object.key),
+            sourceKind: 'data-lake' as const,
+            sourceName,
+          })),
+        );
+      }
+      upsertConnectorTables(imported);
+      setConnectorPanel(null);
+      const rowCount = imported.reduce(
+        (total, table) => total + table.rows.length,
+        0,
+      );
+      showNotice(
+        `Imported ${imported.length} data lake table(s), ${rowCount.toLocaleString()} rows.`,
+      );
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : 'Data lake import failed.',
+      );
+    } finally {
+      setDataLakeImporting(false);
+    }
+  }
+
+  async function importOdbcQuery() {
+    if (!canEdit || odbcQueryRunning) return;
+    const bridge = getDesktopBridge();
+    if (!bridge) {
+      return showNotice('ODBC import requires the Pivora Windows desktop app.');
+    }
+    const connectionString =
+      odbcConnectionString.trim() ||
+      (odbcDsn ? odbcDsnConnectionString(odbcDsn) : '');
+    if (!connectionString)
+      return showNotice('Enter an ODBC connection string.');
+    setOdbcQueryRunning(true);
+    try {
+      const result = await bridge.runOdbcQuery({
+        connectionString,
+        query: odbcSql,
+        maxRows: odbcRowLimit,
+        commandTimeoutSeconds: 30,
+      });
+      const source = odbcDiscovery?.sources.find(
+        (candidate) => candidate.name === odbcDsn,
+      );
+      const sourceName = `ODBC · ${source?.name || result.dataSource || result.driver || 'session query'}`;
+      const table = {
+        ...makeTable({
+          name: odbcTableName.trim() || result.database || 'ODBC result',
+          rows: normalizeRows(result.rows),
+          sourceKind: 'odbc',
+          sourceName,
+        }),
+        truncated: result.truncated,
+      };
+      upsertConnectorTables([table]);
+      setConnectorPanel(null);
+      showNotice(
+        `Imported ODBC table with ${table.rows.length.toLocaleString()} rows in ${result.durationMs.toLocaleString()} ms${result.truncated ? ' · result limit reached' : ''}.`,
+      );
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : 'ODBC query import failed.',
+      );
+    } finally {
+      setOdbcQueryRunning(false);
     }
   }
 
@@ -2130,6 +2397,15 @@ export default function Home() {
           <Button
             variant="outline"
             size="sm"
+            disabled={!canEdit}
+            onClick={() => void openConnector('web')}
+          >
+            <Cable />
+            <span className="hidden xl:inline">Connect</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             disabled={!storageReady}
             onClick={() => void saveNow()}
           >
@@ -2154,6 +2430,452 @@ export default function Home() {
             <X />
           </button>
         </output>
+      )}
+
+      {connectorPanel && (
+        <dialog
+          open
+          className="connector-dialog-backdrop"
+          aria-label="Data connectors"
+          onCancel={() => setConnectorPanel(null)}
+        >
+          <section className="connector-dialog">
+            <header>
+              <div>
+                <span className="eyebrow">LOCAL CONNECTOR HUB</span>
+                <h2>Connect to data</h2>
+                <p>
+                  Credentials and request headers remain in this session. Only
+                  imported rows become part of the report.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Close data connectors"
+                onClick={() => setConnectorPanel(null)}
+              >
+                <X />
+              </Button>
+            </header>
+            <nav className="connector-tabs" aria-label="Connector type">
+              <button
+                className={connectorPanel === 'web' ? 'active' : ''}
+                onClick={() => setConnectorPanel('web')}
+              >
+                <Globe2 />
+                Web / API
+              </button>
+              <button
+                className={connectorPanel === 'data-lake' ? 'active' : ''}
+                onClick={() => setConnectorPanel('data-lake')}
+              >
+                <CloudDownload />
+                Data lake
+              </button>
+              <button
+                className={connectorPanel === 'odbc' ? 'active' : ''}
+                onClick={() => void openConnector('odbc')}
+              >
+                <Database />
+                ODBC
+              </button>
+            </nav>
+
+            {connectorPanel === 'web' && (
+              <section className="connector-panel web-connector-panel">
+                <div className="panel-title">
+                  <Globe2 />
+                  <div>
+                    <strong>Web & API connector</strong>
+                    <small>
+                      Binary-safe GET for CSV, JSON, XML, Parquet, Excel, and
+                      SQLite endpoints
+                    </small>
+                  </div>
+                </div>
+                <label>
+                  Source URL
+                  <input
+                    className="form-input"
+                    type="url"
+                    placeholder="https://api.example.com/data.parquet"
+                    value={webUrl}
+                    onChange={(event) => setWebUrl(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Table name
+                  <input
+                    className="form-input"
+                    placeholder="Optional friendly name"
+                    value={webTableName}
+                    onChange={(event) => setWebTableName(event.target.value)}
+                  />
+                </label>
+                <label className="web-header-field">
+                  Session-only request headers
+                  <textarea
+                    className="form-input font-mono"
+                    aria-label="Web request headers"
+                    placeholder={'{"Authorization":"Bearer …"}'}
+                    value={webHeaders}
+                    onChange={(event) => setWebHeaders(event.target.value)}
+                  />
+                </label>
+                <div className="web-connector-actions">
+                  <p>
+                    Headers are never saved in the report. The endpoint must
+                    allow browser CORS; fetched rows stay in this local model.
+                  </p>
+                  <Button
+                    size="sm"
+                    onClick={() => void importWebSource()}
+                    disabled={webLoading || !webUrl.trim()}
+                  >
+                    {webLoading ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <Globe2 />
+                    )}
+                    Fetch source
+                  </Button>
+                </div>
+              </section>
+            )}
+
+            {connectorPanel === 'data-lake' && (
+              <section className="connector-panel data-lake-connector-panel">
+                <div className="panel-title">
+                  <CloudDownload />
+                  <div>
+                    <strong>Object storage & data lake</strong>
+                    <small>
+                      Discover supported objects with provider pagination, then
+                      import an explicit selection
+                    </small>
+                  </div>
+                </div>
+                <label htmlFor="data-lake-provider">
+                  Provider
+                  <NativeSelect
+                    id="data-lake-provider"
+                    aria-label="Data lake provider"
+                    value={dataLakeProvider}
+                    onChange={(event) => {
+                      setDataLakeProvider(
+                        event.target.value as DataLakeProvider,
+                      );
+                      setDataLakeObjects([]);
+                      setSelectedDataLakeObjects(new Set());
+                      setDataLakeDiscoveryNote('');
+                    }}
+                  >
+                    <NativeSelectOption value="s3">
+                      Amazon S3 / compatible
+                    </NativeSelectOption>
+                    <NativeSelectOption value="azure">
+                      Azure Blob Storage
+                    </NativeSelectOption>
+                    <NativeSelectOption value="gcs">
+                      Google Cloud Storage
+                    </NativeSelectOption>
+                    <NativeSelectOption value="manifest">
+                      URL manifest
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </label>
+                <label className="connector-endpoint-field">
+                  {dataLakeProvider === 'gcs'
+                    ? 'Bucket or gs:// path'
+                    : dataLakeProvider === 'manifest'
+                      ? 'Manifest URL'
+                      : dataLakeProvider === 'azure'
+                        ? 'Container URL'
+                        : 'Bucket URL'}
+                  <input
+                    className="form-input"
+                    aria-label="Data lake endpoint"
+                    placeholder={
+                      dataLakeProvider === 'gcs'
+                        ? 'gs://bucket/optional/base/path'
+                        : dataLakeProvider === 'azure'
+                          ? 'https://account.blob.core.windows.net/container?SAS'
+                          : dataLakeProvider === 'manifest'
+                            ? 'https://gateway.example.com/objects.json'
+                            : 'https://bucket.s3.region.amazonaws.com/'
+                    }
+                    value={dataLakeEndpoint}
+                    onChange={(event) =>
+                      setDataLakeEndpoint(event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  Object prefix
+                  <input
+                    className="form-input"
+                    aria-label="Data lake object prefix"
+                    placeholder="curated/2026/"
+                    value={dataLakePrefix}
+                    onChange={(event) => setDataLakePrefix(event.target.value)}
+                  />
+                </label>
+                <label>
+                  Discovery limit
+                  <input
+                    className="form-input"
+                    type="number"
+                    min={1}
+                    max={1000}
+                    aria-label="Data lake discovery limit"
+                    value={dataLakeLimit}
+                    onChange={(event) =>
+                      setDataLakeLimit(
+                        Math.min(
+                          1000,
+                          Math.max(1, Number(event.target.value) || 1),
+                        ),
+                      )
+                    }
+                  />
+                </label>
+                <label className="data-lake-header-field">
+                  Session-only request headers
+                  <textarea
+                    className="form-input font-mono"
+                    aria-label="Data lake request headers"
+                    placeholder={'{"Authorization":"Bearer …"}'}
+                    value={dataLakeHeaders}
+                    onChange={(event) => setDataLakeHeaders(event.target.value)}
+                  />
+                </label>
+                <div className="connector-discovery-actions">
+                  <p>
+                    Supports public/CORS endpoints, bearer headers, Azure SAS,
+                    and manifests containing per-object presigned URLs.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={dataLakeLoading || !dataLakeEndpoint.trim()}
+                    onClick={() => void discoverDataLake()}
+                  >
+                    {dataLakeLoading ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <CloudDownload />
+                    )}
+                    Discover objects
+                  </Button>
+                </div>
+                {(dataLakeDiscoveryNote || dataLakeObjects.length > 0) && (
+                  <div className="connector-object-browser">
+                    <header>
+                      <div>
+                        <strong>Import selection</strong>
+                        <small>{dataLakeDiscoveryNote}</small>
+                      </div>
+                      <Button
+                        size="sm"
+                        disabled={
+                          dataLakeImporting ||
+                          selectedDataLakeObjects.size === 0
+                        }
+                        onClick={() => void importDataLakeSelection()}
+                      >
+                        {dataLakeImporting ? (
+                          <LoaderCircle className="animate-spin" />
+                        ) : (
+                          <Upload />
+                        )}
+                        Import selected ({selectedDataLakeObjects.size})
+                      </Button>
+                    </header>
+                    <div className="connector-object-list">
+                      {dataLakeObjects.map((object) => (
+                        <label key={object.id}>
+                          <input
+                            type="checkbox"
+                            checked={selectedDataLakeObjects.has(object.id)}
+                            onChange={() => toggleDataLakeObject(object.id)}
+                          />
+                          <span>
+                            <strong>{object.key}</strong>
+                            <small>
+                              {formatBytes(object.size)}
+                              {object.lastModified
+                                ? ` · ${new Date(object.lastModified).toLocaleString()}`
+                                : ''}
+                            </small>
+                          </span>
+                          <Badge variant="outline">{object.provider}</Badge>
+                        </label>
+                      ))}
+                      {!dataLakeObjects.length && dataLakeDiscoveryNote && (
+                        <p>No supported data objects were discovered.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {connectorPanel === 'odbc' && (
+              <section className="connector-panel odbc-connector-panel">
+                <div className="panel-title">
+                  <Database />
+                  <div>
+                    <strong>Windows ODBC bridge</strong>
+                    <small>
+                      Execute one guarded SELECT/WITH query through an installed
+                      64-bit ODBC driver
+                    </small>
+                  </div>
+                  <Badge
+                    variant={odbcDiscovery?.available ? 'default' : 'outline'}
+                  >
+                    {odbcDiscovery?.available
+                      ? 'Desktop bridge ready'
+                      : 'Desktop required'}
+                  </Badge>
+                </div>
+                <label htmlFor="odbc-source">
+                  Installed data source
+                  <NativeSelect
+                    id="odbc-source"
+                    aria-label="ODBC data source"
+                    value={odbcDsn}
+                    disabled={odbcLoading || !odbcDiscovery?.available}
+                    onChange={(event) => setOdbcDsn(event.target.value)}
+                  >
+                    <NativeSelectOption value="">
+                      Manual connection string
+                    </NativeSelectOption>
+                    {(odbcDiscovery?.sources ?? []).map((source) => (
+                      <NativeSelectOption
+                        key={`${source.platform}:${source.type}:${source.name}`}
+                        value={source.name}
+                      >
+                        {source.name} · {source.driver}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </label>
+                <label className="odbc-connection-field">
+                  Session-only connection string
+                  <span>
+                    <input
+                      className="form-input font-mono"
+                      type={showOdbcConnectionString ? 'text' : 'password'}
+                      aria-label="ODBC connection string"
+                      placeholder={
+                        odbcDsn
+                          ? 'Optional override for the selected DSN'
+                          : 'Driver={...};Server=...;Database=...;'
+                      }
+                      value={odbcConnectionString}
+                      onChange={(event) =>
+                        setOdbcConnectionString(event.target.value)
+                      }
+                    />
+                    <button
+                      type="button"
+                      aria-label={
+                        showOdbcConnectionString
+                          ? 'Hide ODBC connection string'
+                          : 'Show ODBC connection string'
+                      }
+                      onClick={() =>
+                        setShowOdbcConnectionString((visible) => !visible)
+                      }
+                    >
+                      {showOdbcConnectionString ? <EyeOff /> : <Eye />}
+                    </button>
+                  </span>
+                </label>
+                <label>
+                  Imported table name
+                  <input
+                    className="form-input"
+                    aria-label="ODBC imported table name"
+                    value={odbcTableName}
+                    onChange={(event) => setOdbcTableName(event.target.value)}
+                  />
+                </label>
+                <label htmlFor="odbc-row-limit">
+                  Row limit
+                  <NativeSelect
+                    id="odbc-row-limit"
+                    aria-label="ODBC row limit"
+                    value={String(odbcRowLimit)}
+                    onChange={(event) =>
+                      setOdbcRowLimit(Number(event.target.value))
+                    }
+                  >
+                    <NativeSelectOption value="1000">1,000</NativeSelectOption>
+                    <NativeSelectOption value="10000">
+                      10,000
+                    </NativeSelectOption>
+                    <NativeSelectOption value="50000">
+                      50,000
+                    </NativeSelectOption>
+                    <NativeSelectOption value="100000">
+                      100,000
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </label>
+                <label className="odbc-query-field">
+                  Read-only SQL query
+                  <textarea
+                    className="form-input font-mono"
+                    aria-label="ODBC SQL query"
+                    value={odbcSql}
+                    onChange={(event) => setOdbcSql(event.target.value)}
+                  />
+                </label>
+                <div className="odbc-connector-actions">
+                  <p>
+                    {odbcLoading
+                      ? 'Discovering installed data sources…'
+                      : odbcDiscovery?.message ||
+                        `${odbcDiscovery?.sources.length ?? 0} DSN(s) · ${odbcDiscovery?.drivers.length ?? 0} installed driver(s). Connection details and SQL are never saved.`}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={odbcLoading || !getDesktopBridge()}
+                    onClick={() => void refreshOdbcSources()}
+                  >
+                    {odbcLoading ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <RefreshCw />
+                    )}
+                    Refresh DSNs
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={
+                      odbcQueryRunning ||
+                      !odbcDiscovery?.available ||
+                      !odbcSql.trim() ||
+                      (!odbcDsn && !odbcConnectionString.trim())
+                    }
+                    onClick={() => void importOdbcQuery()}
+                  >
+                    {odbcQueryRunning ? (
+                      <LoaderCircle className="animate-spin" />
+                    ) : (
+                      <Database />
+                    )}
+                    Run & import
+                  </Button>
+                </div>
+              </section>
+            )}
+          </section>
+        </dialog>
       )}
 
       <div
@@ -2969,7 +3691,7 @@ export default function Home() {
                     transformations are non-destructive.
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="connector-toolbar">
                   <NativeSelect
                     className="w-44"
                     size="sm"
@@ -3011,77 +3733,38 @@ export default function Home() {
                     Add folder
                   </Button>
                   <Button
-                    variant={showWebConnector ? 'secondary' : 'outline'}
+                    variant={connectorPanel === 'web' ? 'secondary' : 'outline'}
                     size="sm"
-                    onClick={() => setShowWebConnector((visible) => !visible)}
+                    onClick={() => void openConnector('web')}
                     disabled={!canEdit}
                   >
                     <Globe2 />
                     Web / API
                   </Button>
+                  <Button
+                    variant={
+                      connectorPanel === 'data-lake' ? 'secondary' : 'outline'
+                    }
+                    size="sm"
+                    onClick={() => void openConnector('data-lake')}
+                    disabled={!canEdit}
+                  >
+                    <CloudDownload />
+                    Data lake
+                  </Button>
+                  <Button
+                    variant={
+                      connectorPanel === 'odbc' ? 'secondary' : 'outline'
+                    }
+                    size="sm"
+                    onClick={() => void openConnector('odbc')}
+                    disabled={!canEdit}
+                  >
+                    <Database />
+                    ODBC
+                  </Button>
                 </div>
               </div>
-
-              {showWebConnector && (
-                <section className="web-connector-panel">
-                  <div className="panel-title">
-                    <Globe2 />
-                    <div>
-                      <strong>Web & API connector</strong>
-                      <small>
-                        Explicit browser GET for JSON, CSV, or XML endpoints
-                      </small>
-                    </div>
-                  </div>
-                  <label>
-                    Source URL
-                    <input
-                      className="form-input"
-                      type="url"
-                      placeholder="https://api.example.com/data.json"
-                      value={webUrl}
-                      onChange={(event) => setWebUrl(event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Table name
-                    <input
-                      className="form-input"
-                      placeholder="Optional friendly name"
-                      value={webTableName}
-                      onChange={(event) => setWebTableName(event.target.value)}
-                    />
-                  </label>
-                  <label className="web-header-field">
-                    Session-only request headers
-                    <textarea
-                      className="form-input font-mono"
-                      aria-label="Web request headers"
-                      placeholder={'{"Authorization":"Bearer …"}'}
-                      value={webHeaders}
-                      onChange={(event) => setWebHeaders(event.target.value)}
-                    />
-                  </label>
-                  <div className="web-connector-actions">
-                    <p>
-                      Headers are never saved in the report. The endpoint must
-                      allow browser CORS; fetched rows stay in this local model.
-                    </p>
-                    <Button
-                      size="sm"
-                      onClick={() => void importWebSource()}
-                      disabled={webLoading || !webUrl.trim()}
-                    >
-                      {webLoading ? (
-                        <LoaderCircle className="animate-spin" />
-                      ) : (
-                        <Globe2 />
-                      )}
-                      Fetch source
-                    </Button>
-                  </div>
-                </section>
-              )}
 
               <div className="data-prep-grid">
                 <section className="prep-panel query-steps-panel">

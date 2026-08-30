@@ -22,7 +22,7 @@
 
 ## Analytics without the upload step
 
-Pivora brings the fast, visual authoring loop of a desktop BI tool into an auditable open-source application. Open files, model data, run local DuckDB SQL, build dashboards, and export the result. The entire workflow stays on your machine.
+Pivora brings the fast, visual authoring loop of a desktop BI tool into an auditable open-source application. Open files, connect to explicitly selected sources, model data, run local DuckDB SQL, build dashboards, and export the result. Imported data and report state stay on your machine.
 
 There is no account, telemetry pipeline, hosted database, or cloud deployment requirement.
 
@@ -33,7 +33,9 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 
 |     | Capability               | What it gives you                                                                                           |
 | --- | ------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| 📥  | **Multi-format import**  | CSV, JSON, XML, Parquet, Excel, SQLite, folders, and explicit Web/API GET                                   |
+| 📥  | **Multi-format import**  | CSV, JSON, XML, Parquet, Excel, SQLite, folders, and binary-safe Web/API GET                                |
+| ☁️  | **Data-lake discovery**  | Paginated S3-compatible, Azure Blob, and Google Cloud Storage listings, plus explicit URL manifests         |
+| 🔌  | **Desktop ODBC**         | Installed Windows DSNs/drivers and guarded read-only `SELECT`/`WITH` query imports                          |
 | 🧹  | **Data preparation**     | 14 ordered query operations, including merge, append, pivot, unpivot, cleaning, profiling, and previews     |
 | 🧩  | **Semantic modeling**    | Four cardinalities, diagnostics, formulas, measures, what-if parameters, and curated column metadata        |
 | 📊  | **Visual authoring**     | 14 visuals, hierarchies, drillthrough, conditional scales, secondary measures, sorting, and Top N           |
@@ -56,6 +58,8 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 ```mermaid
 flowchart LR
     A[Local files] --> B[Import and normalize]
+    N[Opt-in network sources] --> B
+    O[Desktop ODBC] --> B
     B --> C[Clean and model]
     C --> D[Query steps and formulas]
     D --> E[Multi-page report]
@@ -119,7 +123,7 @@ Desktop artifacts are written to `release/`. The packaged application owns the f
 
 ## Build your first report
 
-1. Select **New** to start from a blank canvas or guided local template, then choose **Import** for one or more supported files.
+1. Select **New** to start from a blank canvas or guided local template. Choose **Import** for local files, or **Connect** for Web/API, data-lake, and desktop ODBC sources.
 2. Open **Data & clean** to build an ordered preparation pipeline, clean columns non-destructively, and inspect quality, frequency, and numeric distribution for every field.
 3. Open **Model** to define relationships, formulas such as `[revenue] - [cost]`, reusable measures, row rules, what-if parameters, and report-facing column metadata.
 4. Return to **Dashboard**, choose **Auto snap** or **Freeform**, create pages, add visuals, and configure aggregations, quick calculations, filter scopes, visual interactions, synced slicers, and page drillthrough fields. Freeform keeps fine positions, allows intentional overlap, and grows into a scrollable canvas when visuals move beyond the initial viewport.
@@ -161,6 +165,7 @@ Pivora
 ├── Optional Electron desktop shell
 │   ├── sandboxed renderer with Node.js disabled
 │   ├── loopback-only Utility Process runtime
+│   ├── origin-checked Windows ODBC bridge
 │   ├── startup health check and diagnostics log
 │   └── NSIS installer + portable Windows target
 └── Browser application
@@ -171,7 +176,8 @@ Pivora
     │   ├── DOM parser        → XML collections
     │   ├── Hyparquet         → Parquet + compression codecs
     │   ├── sql.js + WASM     → SQLite
-    │   └── explicit fetch    → Web/API JSON, CSV, and XML
+    │   ├── explicit fetch    → Web/API CSV, JSON, XML, Parquet, Excel, and SQLite
+    │   └── provider listings → S3-compatible, Azure Blob, GCS, and URL manifests
     ├── Local semantic engine
     │   ├── transforms
     │   ├── ordered query steps
@@ -208,6 +214,8 @@ Pivora
 | -------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | [`app/page.tsx`](./app/page.tsx)                                     | Application shell, report authoring, navigation, and orchestration |
 | [`lib/data-import.ts`](./lib/data-import.ts)                         | File adapters and row normalization                                |
+| [`lib/data-lake.ts`](./lib/data-lake.ts)                             | Object discovery, pagination, selection, and bounded downloads     |
+| [`desktop/odbc-bridge.mjs`](./desktop/odbc-bridge.mjs)               | Windows DSN inventory and guarded read-only query execution        |
 | [`lib/duckdb-engine.ts`](./lib/duckdb-engine.ts)                     | Browser-local read-only DuckDB SQL execution                       |
 | [`lib/bi-model.ts`](./lib/bi-model.ts)                               | Transforms, formulas, relationships, materialization, and filters  |
 | [`lib/report-storage.ts`](./lib/report-storage.ts)                   | IndexedDB persistence and report library                           |
@@ -221,7 +229,9 @@ Pivora
 Pivora is built around a small trust boundary:
 
 - Data files are parsed in the browser.
-- Web/API calls occur only after an explicit fetch action; session headers are never saved.
+- Web/API and data-lake calls occur only after an explicit action. Request headers, SAS parameters, and presigned URL queries remain session-only; imported rows retain only a query-free source label.
+- ODBC connection strings and SQL stay in renderer memory and are never written into the report. Only imported rows and non-secret source metadata persist.
+- The Windows ODBC bridge accepts one `SELECT`/`WITH` statement at a time, rejects write-capable keywords, caps results at 100,000 rows, and enforces process/output limits.
 - Reports, the last-open workspace pointer, and retained version checkpoints are saved to that browser's IndexedDB.
 - SQLite and DuckDB SQL run locally through WebAssembly.
 - Exported report bundles contain the report data by design—treat them like the source files.
@@ -233,14 +243,14 @@ Pivora is built around a small trust boundary:
 
 ## Performance boundaries
 
-Pivora currently caps each imported table at **250,000 rows**. Previews render 100 rows per page, charts aggregate only the materialized fields they need, and the optional DuckDB-WASM engine executes SQL in a Web Worker. Chart rendering, data-import adapters, DuckDB, PNG capture, Excel, and PDF exporters are split from the initial application bundle and fetched only when their workflows are opened.
+Pivora currently caps each imported table at **250,000 rows**, each data-lake object download at **512 MB**, and each ODBC result at **100,000 rows**. Previews render 100 rows per page, charts aggregate only the materialized fields they need, and the optional DuckDB-WASM engine executes SQL in a Web Worker. Chart rendering, data-import adapters, DuckDB, PNG capture, Excel, and PDF exporters are split from the initial application bundle and fetched only when their workflows are opened.
 
 For datasets that exceed the browser's practical memory budget, reduce the source file or query it into a smaller SQLite table before import.
 
 ## Quality gates
 
 ```bash
-npm test          # 41 focused checks for analytics, imports, schema, i18n, recovery, and layout modes
+npm test          # 53 focused checks, including data-lake discovery and the desktop ODBC bridge
 npm run lint      # type-aware lint, React checks, and desktop-process checks
 npx tsc --noEmit --incremental false # independent TypeScript check
 npm run build     # production web build and split-asset validation
@@ -248,7 +258,7 @@ npm run test:e2e  # production-server Chromium workflows
 npm run desktop:smoke # packaged Windows startup and shutdown probe
 ```
 
-The Node suite covers analytics, imports, schema behavior, localization, recovery, and layout logic. Playwright then builds and starts the production application and exercises language persistence plus a complete CSV import, table switch, visual creation, freeform drag/resize, `.pivora` bundle export, and PNG export workflow in Chromium. The E2E checks also ensure heavy SQL and export engines stay out of the initial page load.
+The Node suite covers analytics, imports, connector pagination, ODBC query guards, schema behavior, localization, recovery, and layout logic. Playwright then builds and starts the production application and exercises language persistence; CSV import, table switching, visual creation, freeform drag/resize, `.pivora` and PNG export; and a data-lake-manifest plus desktop ODBC import workflow. The E2E checks also ensure heavy SQL and export engines stay out of the initial page load. Packaged desktop smoke tests additionally probe the Windows ODBC inventory bridge.
 
 ## Current scope
 
@@ -260,6 +270,8 @@ Pivora is a capable local report authoring application, not a binary-compatible 
 - Roles do not provide cryptographic access control.
 - Collaboration uses portable bundles instead of a real-time server.
 - Scheduled refresh works with browser-authorized local file handles.
+- Data-lake endpoints must be public/CORS-enabled or use explicitly supplied session headers, SAS parameters, or presigned manifest URLs; Pivora does not manage cloud IAM credentials.
+- ODBC import is available only in the Windows desktop build and depends on a compatible installed 64-bit driver.
 - Power BI Service-only features such as Microsoft tenant workspaces, gateways, Fabric, and Azure-managed deployment are outside the local-only trust boundary.
 
 These constraints keep the project private-by-default, understandable, and easy to run.
@@ -287,7 +299,7 @@ These constraints keep the project private-by-default, understandable, and easy 
 - [x] Add blank, guided retail, executive, and scenario-planning report templates
 - [x] Add stable table resizing, explicit table switching, and auto-snap/freeform canvas modes
 - [x] Add local Windows installer/portable builds with sandboxing, startup diagnostics, and packaged smoke tests
-- [ ] Add ODBC-style bridge and data-lake connectors
+- [x] Add a guarded Windows ODBC bridge and paginated S3-compatible, Azure Blob, GCS, and manifest data-lake connectors
 - [x] Add repeatable end-to-end browser tests for import, authoring, and export flows
 - [x] Add persistent English and Simplified Chinese internationalization
 

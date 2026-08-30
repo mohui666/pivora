@@ -35,6 +35,22 @@ void test('translates dynamic counts and progress notices', () => {
   );
 });
 
+void test('translates connector controls and import status', () => {
+  assert.equal(translateUiText('zh-CN', 'Data connectors'), '数据连接器');
+  assert.equal(translateUiText('zh-CN', 'Data lake'), '数据湖');
+  assert.equal(
+    translateUiText(
+      'zh-CN',
+      'Discovered 12 supported object(s) from 18 scanned · result limit reached.',
+    ),
+    '已从 18 个扫描对象中发现 12 个支持的对象 · 已达到结果上限。',
+  );
+  assert.equal(
+    translateUiText('zh-CN', 'Imported ODBC table with 1,250 rows in 42.5 ms.'),
+    '已通过 ODBC 导入 1,250 行，耗时 42.5 毫秒。',
+  );
+});
+
 void test('leaves dataset values and unknown messages untouched', () => {
   assert.equal(translateUiText('zh-CN', 'North America'), 'North America');
   assert.equal(translateUiText('zh-CN', 'revenue'), 'revenue');
