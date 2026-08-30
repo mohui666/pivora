@@ -38,6 +38,8 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 | 📊  | **Visual authoring**     | 14 visuals, hierarchies, drillthrough, conditional scales, secondary measures, sorting, and Top N        |
 | ✨  | **Report authoring**     | Multi-page canvas, scoped filters, interaction matrix, synced slicers, themes, bookmarks, undo, and redo |
 | 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                           |
+| 🛟  | **Workspace recovery**   | Reopen the last active report and restore from up to 30 compressed manual/automatic local checkpoints    |
+| 🧱  | **Report templates**     | Start blank or use guided retail, executive, and live scenario-planning report structures                |
 | 🧠  | **Local SQL workbench**  | Read-only DuckDB-WASM queries over materialized report tables, with history and reusable results         |
 | 📦  | **Portable output**      | Import/export `.pivora` (plus legacy `.llbi`), active-page PNG, and multi-page PDF                       |
 | ⏱️  | **Performance analyzer** | Measure local aggregation time, input rows, and output points for every visual on a page                 |
@@ -95,12 +97,12 @@ No Sites binding, hosted service, or external database is required.
 
 ## Build your first report
 
-1. Select **Import** and choose one or more supported local files.
+1. Select **New** to start from a blank canvas or guided local template, then choose **Import** for one or more supported files.
 2. Open **Data & clean** to build an ordered preparation pipeline, clean columns non-destructively, and inspect quality, frequency, and numeric distribution for every field.
 3. Open **Model** to define relationships, formulas such as `[revenue] - [cost]`, reusable measures, row rules, what-if parameters, and report-facing column metadata.
 4. Return to **Dashboard**, create pages, add visuals, and configure aggregations, quick calculations, filter scopes, visual interactions, synced slicers, and page drillthrough fields.
 5. Click a chart value to cross-filter related visuals or transfer its context into a configured drillthrough page; capture useful states as bookmarks.
-6. Apply a report theme, undo/redo edits, save locally, export a portable `.pivora` bundle, or render the active page to PNG/PDF.
+6. Apply a report theme, undo/redo edits, save a restorable checkpoint, export a portable `.pivora` bundle, or render the active page to PNG/PDF.
 
 ## Data model
 
@@ -167,6 +169,7 @@ Browser
 │   └── visual inspector
 └── Local persistence
     ├── IndexedDB report library
+    ├── last-workspace recovery and 30-version local history
     ├── .pivora bundles
     └── PNG / PDF exports
 ```
@@ -190,7 +193,7 @@ Pivora is built around a small trust boundary:
 
 - Data files are parsed in the browser.
 - Web/API calls occur only after an explicit fetch action; session headers are never saved.
-- Reports are saved to that browser's IndexedDB.
+- Reports, the last-open workspace pointer, and retained version checkpoints are saved to that browser's IndexedDB.
 - SQLite and DuckDB SQL run locally through WebAssembly.
 - Exported report bundles contain the report data by design—treat them like the source files.
 - Owner, Editor, and Viewer are local workflow guards, not multi-user authentication or server authorization.
@@ -205,7 +208,7 @@ For datasets that exceed the browser's practical memory budget, reduce the sourc
 ## Quality gates
 
 ```bash
-npm test       # 28 focused checks for profiling, formulas, filters, joins, query dependencies, schema, and imports
+npm test       # 30 focused checks for profiling, formulas, filters, joins, templates, schema, and imports
 npm run lint   # type-aware lint and React checks
 npm run build  # production build
 ```
@@ -245,6 +248,8 @@ These constraints keep the project private-by-default, understandable, and easy 
 - [x] Add append, merge, pivot, and unpivot query steps with dependency-cycle protection
 - [x] Add per-visual interaction controls and cross-page synchronized slicers
 - [x] Add display names, descriptions, categories, default formats, hidden fields, and sort-by-column metadata
+- [x] Add last-workspace crash recovery and retained local version checkpoints
+- [x] Add blank, guided retail, executive, and scenario-planning report templates
 - [ ] Add ODBC-style bridge and data-lake connectors
 - [ ] Add repeatable end-to-end browser tests for import, authoring, and export flows
 - [ ] Add internationalization

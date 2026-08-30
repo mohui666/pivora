@@ -17,6 +17,7 @@ import {
   FolderOpen,
   Globe2,
   GripHorizontal,
+  History,
   ImageDown,
   LayoutDashboard,
   Link2,
@@ -31,6 +32,7 @@ import {
   Save,
   Settings2,
   Share2,
+  Sparkles,
   SquareTerminal,
   Sun,
   Table2,
@@ -40,6 +42,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  type CSSProperties,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -96,16 +99,23 @@ import type {
   ReportPage,
   ReportParameter,
   ReportRole,
+  ReportSnapshotSummary,
   ReportSummary,
   RoleRule,
   SemanticMeasure,
 } from '@/lib/bi-types';
 import { parseDataFile } from '@/lib/data-import';
 import { REPORT_THEMES, upgradeReport } from '@/lib/report-schema';
+import { REPORT_TEMPLATES } from '@/lib/report-templates';
 import {
+  createReportSnapshot,
   deleteReport,
+  deleteReportSnapshot,
   listReports,
+  listReportSnapshots,
+  loadLastReport,
   loadReport,
+  loadReportSnapshot,
   saveReport,
 } from '@/lib/report-storage';
 import { createSampleReport } from '@/lib/sample-report';
@@ -119,6 +129,8 @@ type VisualPerformance = {
   outputPoints: number;
   measuredAt: string;
 };
+
+const AUTO_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
@@ -231,12 +243,17 @@ export default function Home() {
   const [notice, setNotice] = useState('');
   const [importing, setImporting] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [storageReady, setStorageReady] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
   const [showFilterPane, setShowFilterPane] = useState(false);
   const [performanceProfiles, setPerformanceProfiles] = useState<
     Record<string, VisualPerformance>
   >({});
   const [savedReports, setSavedReports] = useState<ReportSummary[]>([]);
+  const [reportSnapshots, setReportSnapshots] = useState<
+    ReportSnapshotSummary[]
+  >([]);
   const [dataPage, setDataPage] = useState(0);
   const [dataSearch, setDataSearch] = useState('');
   const [profileField, setProfileField] = useState('revenue');
@@ -353,6 +370,7 @@ export default function Home() {
   const folderInput = useRef<HTMLInputElement>(null);
   const reportInput = useRef<HTMLInputElement>(null);
   const dashboardRef = useRef<HTMLDivElement>(null);
+  const lastAutoSnapshotAt = useRef(0);
   const fileHandles = useRef(new Map<string, LocalFileHandle>());
   const {
     width: gridWidth,
@@ -360,8 +378,8 @@ export default function Home() {
     mounted: gridMounted,
   } = useContainerWidth({ initialWidth: 1100 });
 
-  const canEdit = report.role !== 'viewer';
-  const canManage = report.role === 'owner';
+  const canEdit = storageReady && report.role !== 'viewer';
+  const canManage = storageReady && report.role === 'owner';
   const activeTable =
     report.tables.find((table) => table.id === activeTableId) ??
     report.tables[0];
@@ -394,6 +412,19 @@ export default function Home() {
 
   function replaceReport(next: ReportDocument) {
     setHistory({ past: [], present: upgradeReport(next), future: [] });
+  }
+
+  function activateReport(next: ReportDocument) {
+    const upgraded = upgradeReport(next);
+    replaceReport(upgraded);
+    setActiveTableId(upgraded.tables[0]?.id ?? '');
+    setSelectedWidgetId(upgraded.widgets[0]?.id ?? '');
+    setActivePageId(upgraded.pages[0]?.id ?? '');
+    setMetadataSelection({
+      tableId: upgraded.tables[0]?.id ?? '',
+      field: inferFields(upgraded.tables[0]?.rows ?? [])[0]?.name ?? '',
+    });
+    setView('dashboard');
   }
 
   function undo() {
@@ -796,20 +827,88 @@ export default function Home() {
     setSavedReports(await listReports());
   }, []);
 
+  const refreshSnapshots = useCallback(async (reportId: string) => {
+    setReportSnapshots(await listReportSnapshots(reportId));
+  }, []);
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
   }, [dark]);
 
   useEffect(() => {
+    let cancelled = false;
+    void Promise.all([loadLastReport(), listReports()])
+      .then(([lastReport, reports]) => {
+        if (cancelled) return;
+        setSavedReports(reports);
+        if (lastReport) {
+          activateReport(lastReport);
+          void refreshSnapshots(lastReport.id);
+          setNotice(`Recovered “${lastReport.name}” from local autosave.`);
+        } else {
+          setShowTemplates(true);
+        }
+        lastAutoSnapshotAt.current = Date.now();
+        setStorageReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        lastAutoSnapshotAt.current = Date.now();
+        setStorageReady(true);
+        setNotice(
+          'Local recovery was unavailable. Started with a safe sample.',
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshSnapshots]);
+
+  useEffect(() => {
+    if (!storageReady || showTemplates) return;
     const timer = window.setTimeout(() => {
-      void saveReport(report).then(refreshLibrary);
+      void saveReport(report).then(async () => {
+        if (
+          Date.now() - lastAutoSnapshotAt.current >=
+          AUTO_SNAPSHOT_INTERVAL_MS
+        ) {
+          await createReportSnapshot(report, 'automatic');
+          lastAutoSnapshotAt.current = Date.now();
+          if (showLibrary) await refreshSnapshots(report.id);
+        }
+        await refreshLibrary();
+      });
     }, 1200);
     return () => window.clearTimeout(timer);
-  }, [refreshLibrary, report]);
+  }, [
+    refreshLibrary,
+    refreshSnapshots,
+    report,
+    showLibrary,
+    showTemplates,
+    storageReady,
+  ]);
+
+  useEffect(() => {
+    if (!storageReady || showTemplates) return;
+    const saveWhenHidden = () => {
+      if (document.visibilityState === 'hidden') void saveReport(report);
+    };
+    document.addEventListener('visibilitychange', saveWhenHidden);
+    return () =>
+      document.removeEventListener('visibilitychange', saveWhenHidden);
+  }, [report, showTemplates, storageReady]);
 
   function showNotice(message: string) {
     setNotice(message);
     window.setTimeout(() => setNotice(''), 3600);
+  }
+
+  function openLibrary() {
+    setShowLibrary(true);
+    if (!storageReady) return;
+    void refreshLibrary();
+    void refreshSnapshots(report.id);
   }
 
   async function mergeFiles(
@@ -1447,9 +1546,50 @@ export default function Home() {
   }
 
   async function saveNow() {
-    await saveReport(report);
+    await Promise.all([
+      saveReport(report),
+      createReportSnapshot(report, 'manual'),
+    ]);
     await refreshLibrary();
-    showNotice('Report saved to this browser.');
+    await refreshSnapshots(report.id);
+    lastAutoSnapshotAt.current = Date.now();
+    showNotice('Report saved with a restorable local checkpoint.');
+  }
+
+  async function createCheckpoint() {
+    await createReportSnapshot(report, 'manual');
+    await refreshSnapshots(report.id);
+    lastAutoSnapshotAt.current = Date.now();
+    showNotice('Local version checkpoint created.');
+  }
+
+  async function restoreCheckpoint(snapshotId: string) {
+    const restored = await loadReportSnapshot(snapshotId);
+    if (!restored) return showNotice('That local checkpoint is unavailable.');
+    await createReportSnapshot(report, 'before-restore');
+    const next = { ...restored, updatedAt: new Date().toISOString() };
+    activateReport(next);
+    await saveReport(next);
+    await refreshLibrary();
+    await refreshSnapshots(next.id);
+    setShowLibrary(false);
+    showNotice('Checkpoint restored. The previous state was preserved too.');
+  }
+
+  async function createFromTemplate(templateId: string) {
+    const template = REPORT_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) return;
+    if (savedReports.some((saved) => saved.id === report.id)) {
+      await createReportSnapshot(report, 'before-switch');
+    }
+    const next = template.create();
+    activateReport(next);
+    setStorageReady(true);
+    setShowTemplates(false);
+    await saveReport(next);
+    await refreshLibrary();
+    await refreshSnapshots(next.id);
+    showNotice(`Created “${next.name}” from a local template.`);
   }
 
   function exportReport() {
@@ -1463,12 +1603,13 @@ export default function Home() {
     if (!file) return;
     try {
       const value = upgradeReport(JSON.parse(await file.text()));
-      replaceReport(value);
-      setActiveTableId(value.tables[0]?.id ?? '');
-      setSelectedWidgetId(value.widgets[0]?.id ?? '');
-      setActivePageId(value.pages[0]?.id ?? '');
+      if (savedReports.some((saved) => saved.id === report.id)) {
+        await createReportSnapshot(report, 'before-switch');
+      }
+      activateReport(value);
       await saveReport(value);
       await refreshLibrary();
+      await refreshSnapshots(value.id);
       showNotice('Report bundle opened.');
     } catch (error) {
       showNotice(
@@ -1761,6 +1902,7 @@ export default function Home() {
             size="sm"
             value={report.role}
             aria-label="Local role mode"
+            disabled={!storageReady}
             onChange={(event) =>
               updateReport((current) => ({
                 ...current,
@@ -1814,6 +1956,16 @@ export default function Home() {
           <Button
             variant="outline"
             size="sm"
+            aria-label="New report"
+            disabled={!storageReady}
+            onClick={() => setShowTemplates(true)}
+          >
+            <Sparkles />
+            <span className="hidden xl:inline">New</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             disabled={!canEdit || importing}
             onClick={() => void chooseDataFiles()}
           >
@@ -1824,11 +1976,20 @@ export default function Home() {
             )}
             <span className="hidden lg:inline">Import</span>
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void saveNow()}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!storageReady}
+            onClick={() => void saveNow()}
+          >
             <Save />
             <span className="hidden lg:inline">Save</span>
           </Button>
-          <Button size="sm" disabled={!canEdit} onClick={addWidget}>
+          <Button
+            size="sm"
+            disabled={!canEdit || !activeTable || !activePage}
+            onClick={addWidget}
+          >
             <Plus />
             <span className="hidden sm:inline">Visual</span>
           </Button>
@@ -1915,7 +2076,7 @@ export default function Home() {
           </div>
 
           <div className="mt-auto space-y-1 border-t pt-3">
-            <button className="nav-item" onClick={() => setShowLibrary(true)}>
+            <button className="nav-item" onClick={openLibrary}>
               <BookOpen />
               Report library
             </button>
@@ -2434,6 +2595,34 @@ export default function Home() {
                 style={{ backgroundColor: activePage?.background }}
               >
                 <div ref={gridContainerRef} className="dashboard-grid-host">
+                  {!pageWidgets.length && (
+                    <div className="empty-dashboard">
+                      <span>
+                        <LayoutDashboard />
+                      </span>
+                      <strong>
+                        {report.tables.length
+                          ? 'Build the first visual'
+                          : 'Bring your first dataset into Pivora'}
+                      </strong>
+                      <p>
+                        {report.tables.length
+                          ? 'Choose Visual to turn a modeled table into an interactive report.'
+                          : 'Import CSV, Excel, Parquet, JSON, XML, or SQLite. Every row stays on this device.'}
+                      </p>
+                      <div>
+                        <Button onClick={() => void chooseDataFiles()}>
+                          <FilePlus2 /> Import local data
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setShowTemplates(true)}
+                        >
+                          <Sparkles /> Browse templates
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   {gridMounted && (
                     <ReactGridLayout
                       width={gridWidth}
@@ -5840,9 +6029,18 @@ export default function Home() {
               </button>
             </header>
             <div className="library-actions">
+              <Button
+                onClick={() => {
+                  setShowLibrary(false);
+                  setShowTemplates(true);
+                }}
+              >
+                <Sparkles />
+                New report
+              </Button>
               <Button onClick={() => void saveNow()}>
                 <Save />
-                Save current
+                Save + checkpoint
               </Button>
               <Button variant="outline" onClick={exportReport}>
                 <Share2 />
@@ -5881,12 +6079,14 @@ export default function Home() {
                     size="sm"
                     variant="outline"
                     onClick={() =>
-                      void loadReport(saved.id).then((loaded) => {
+                      void loadReport(saved.id).then(async (loaded) => {
                         if (loaded) {
-                          replaceReport(loaded);
-                          setActiveTableId(loaded.tables[0]?.id ?? '');
-                          setSelectedWidgetId(loaded.widgets[0]?.id ?? '');
-                          setActivePageId(loaded.pages[0]?.id ?? '');
+                          if (loaded.id !== report.id) {
+                            await createReportSnapshot(report, 'before-switch');
+                          }
+                          activateReport(loaded);
+                          await saveReport(loaded);
+                          await refreshSnapshots(loaded.id);
                           setShowLibrary(false);
                         }
                       })
@@ -5897,7 +6097,7 @@ export default function Home() {
                   <Button
                     size="icon-sm"
                     variant="ghost"
-                    disabled={!canManage}
+                    disabled={!canManage || saved.id === report.id}
                     aria-label="Delete saved report"
                     onClick={() =>
                       void deleteReport(saved.id).then(refreshLibrary)
@@ -5908,6 +6108,121 @@ export default function Home() {
                 </article>
               ))}
             </div>
+            <section className="version-history">
+              <header>
+                <History />
+                <div>
+                  <strong>Version history</strong>
+                  <small>
+                    Local checkpoints for {report.name}. Automatic versions are
+                    retained on this device.
+                  </small>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void createCheckpoint()}
+                >
+                  <Save /> Checkpoint
+                </Button>
+              </header>
+              <div className="snapshot-list">
+                {reportSnapshots.map((snapshot) => (
+                  <article key={snapshot.id}>
+                    <History />
+                    <div>
+                      <strong>
+                        {snapshot.reason.replaceAll('-', ' ')} checkpoint
+                      </strong>
+                      <small>
+                        {new Date(snapshot.createdAt).toLocaleString()} ·{' '}
+                        {snapshot.tableCount} tables · {snapshot.widgetCount}{' '}
+                        visuals
+                      </small>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void restoreCheckpoint(snapshot.id)}
+                    >
+                      Restore
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      aria-label="Delete checkpoint"
+                      onClick={() =>
+                        void deleteReportSnapshot(snapshot.id).then(() =>
+                          refreshSnapshots(report.id),
+                        )
+                      }
+                    >
+                      <Trash2 />
+                    </Button>
+                  </article>
+                ))}
+                {!reportSnapshots.length && (
+                  <p className="empty-inline">
+                    No checkpoints yet. Manual Save creates the first one.
+                  </p>
+                )}
+              </div>
+            </section>
+          </section>
+        </dialog>
+      )}
+
+      {showTemplates && (
+        <dialog open className="modal-backdrop">
+          <section className="template-library" aria-label="New report">
+            <header>
+              <div>
+                <p className="eyebrow">LOCAL REPORT STUDIO</p>
+                <h2>Start with a confident structure</h2>
+                <p>
+                  Every template is created locally and remains fully editable.
+                </p>
+              </div>
+              <button
+                aria-label="Close templates"
+                onClick={() => setShowTemplates(false)}
+              >
+                <X />
+              </button>
+            </header>
+            <div className="template-grid">
+              {REPORT_TEMPLATES.map((template) => (
+                <button
+                  key={template.id}
+                  className="template-card"
+                  style={
+                    { '--template-accent': template.accent } as CSSProperties
+                  }
+                  onClick={() => void createFromTemplate(template.id)}
+                >
+                  <span className="template-preview">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                  <small>{template.eyebrow}</small>
+                  <strong>{template.name}</strong>
+                  <p>{template.description}</p>
+                  <span className="template-features">
+                    {template.features.map((feature) => (
+                      <em key={feature}>{feature}</em>
+                    ))}
+                  </span>
+                  <b>
+                    Use template <ArrowDownToLine />
+                  </b>
+                </button>
+              ))}
+            </div>
+            <footer>
+              <LockKeyhole /> No account, upload, or remote workspace is
+              created.
+            </footer>
           </section>
         </dialog>
       )}

@@ -296,3 +296,13 @@ export type ReportSummary = {
   tableCount: number;
   widgetCount: number;
 };
+
+export type ReportSnapshotSummary = {
+  id: string;
+  reportId: string;
+  reportName: string;
+  createdAt: string;
+  reason: 'automatic' | 'manual' | 'before-restore' | 'before-switch';
+  tableCount: number;
+  widgetCount: number;
+};
