@@ -149,6 +149,71 @@ export function applyQuerySteps(
         ...row,
         [step.name || 'Index']: step.start + index,
       }));
+    } else if (step.kind === 'replace-values') {
+      result = result.map((row) => ({
+        ...row,
+        [step.field]: String(row[step.field] ?? '').replaceAll(
+          step.value,
+          step.replacement ?? '',
+        ),
+      }));
+    } else if (step.kind === 'rename-column') {
+      result = result.map((row) => {
+        const next = { ...row };
+        next[step.name || step.field] = next[step.field];
+        delete next[step.field];
+        return next;
+      });
+    } else if (step.kind === 'split-column') {
+      const separator = step.separator || ',';
+      result = result.map((row) => {
+        const parts = String(row[step.field] ?? '').split(separator);
+        const prefix = step.name || step.field;
+        return {
+          ...row,
+          [`${prefix}.1`]: parts[0] ?? '',
+          [`${prefix}.2`]: parts.slice(1).join(separator),
+        };
+      });
+    } else if (step.kind === 'custom-column') {
+      result = applyCalculatedFields(result, tableId, [
+        {
+          id: step.id,
+          tableId,
+          name: step.name || 'Custom',
+          expression: step.value,
+        },
+      ]);
+    } else if (step.kind === 'group-by') {
+      const groups = new Map<string, number[]>();
+      for (const row of result) {
+        const key = String(row[step.field] ?? 'Blank');
+        const numeric = Number(row[step.targetField ?? '']);
+        const values = groups.get(key) ?? [];
+        if (Number.isFinite(numeric)) values.push(numeric);
+        groups.set(key, values);
+      }
+      result = Array.from(groups, ([key, values]) => {
+        const aggregation = step.aggregation ?? 'sum';
+        const value = !values.length
+          ? 0
+          : aggregation === 'count'
+            ? values.length
+            : aggregation === 'distinct-count'
+              ? new Set(values).size
+              : aggregation === 'average'
+                ? values.reduce((sum, item) => sum + item, 0) /
+                  Math.max(1, values.length)
+                : aggregation === 'minimum'
+                  ? Math.min(...values)
+                  : aggregation === 'maximum'
+                    ? Math.max(...values)
+                    : values.reduce((sum, item) => sum + item, 0);
+        return {
+          [step.field]: key,
+          [step.name || `${aggregation}_${step.targetField}`]: value,
+        };
+      });
     }
   }
   return result;

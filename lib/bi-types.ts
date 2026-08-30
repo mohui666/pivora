@@ -5,7 +5,14 @@ import type {
   QuickCalculation,
 } from './analytics';
 
-export type SourceKind = 'sample' | 'csv' | 'json' | 'xml' | 'excel' | 'sqlite';
+export type SourceKind =
+  | 'sample'
+  | 'csv'
+  | 'json'
+  | 'xml'
+  | 'parquet'
+  | 'excel'
+  | 'sqlite';
 export type ChartKind =
   | 'bar'
   | 'line'
@@ -59,6 +66,16 @@ export type CalculatedField = {
   expression: string;
 };
 
+export type SemanticMeasure = {
+  id: string;
+  tableId: string;
+  name: string;
+  field: string;
+  aggregation: Aggregation;
+  calculation: QuickCalculation;
+  numberFormat: NumberFormat;
+};
+
 export type ColumnTransform = {
   id: string;
   tableId: string;
@@ -74,7 +91,12 @@ export type QueryStepKind =
   | 'sort'
   | 'remove-duplicates'
   | 'limit'
-  | 'add-index';
+  | 'add-index'
+  | 'replace-values'
+  | 'rename-column'
+  | 'split-column'
+  | 'custom-column'
+  | 'group-by';
 export type QueryOperator =
   | 'equals'
   | 'not-equals'
@@ -95,6 +117,10 @@ export type QueryStep = {
   name: string;
   start: number;
   enabled: boolean;
+  replacement?: string;
+  separator?: string;
+  targetField?: string;
+  aggregation?: Aggregation;
 };
 
 export type ReportFilter = {
@@ -132,6 +158,11 @@ export type ChartWidget = {
   sortDirection?: SortDirection;
   topN?: number;
   hidden?: boolean;
+  hierarchy?: string[];
+  drillLevel?: number;
+  conditionalFormatting?: boolean;
+  conditionalMinColor?: string;
+  conditionalMaxColor?: string;
   layout: WidgetLayout;
 };
 
@@ -172,6 +203,7 @@ export type ReportDocument = {
   tables: DataTable[];
   relationships: Relationship[];
   calculatedFields: CalculatedField[];
+  measures: SemanticMeasure[];
   transforms: ColumnTransform[];
   querySteps: QueryStep[];
   filters: ReportFilter[];

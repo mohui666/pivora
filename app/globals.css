@@ -560,6 +560,55 @@
   margin-bottom: 0.65rem;
   border-bottom: 1px solid var(--border);
 }
+.performance-panel {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--card);
+}
+.performance-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 0.8rem;
+}
+.performance-panel header strong,
+.performance-panel header small {
+  display: block;
+}
+.performance-panel header strong {
+  font-size: 0.72rem;
+}
+.performance-panel header small {
+  color: var(--muted-foreground);
+  font-size: 0.6rem;
+}
+.performance-panel header button svg {
+  width: 0.8rem;
+}
+.performance-panel > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+}
+.performance-panel article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.1rem 0.6rem;
+  border-right: 1px solid var(--border);
+  padding: 0.55rem 0.8rem;
+  font-size: 0.65rem;
+}
+.performance-panel article span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.performance-panel article small {
+  grid-column: 1 / -1;
+  color: var(--muted-foreground);
+  font-size: 0.58rem;
+}
 .page-tabs {
   display: flex;
   min-width: 0;
@@ -731,6 +780,23 @@
   border-radius: 0.5rem;
   background: transparent;
   padding: 0.2rem;
+}
+.inspector-controls > label.inspector-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
+.conditional-colors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+.conditional-colors label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
 }
 .check-grid {
   display: grid;
@@ -918,6 +984,15 @@
 .calc-form {
   display: grid;
   grid-template-columns: 1fr 1fr 2fr auto;
+  gap: 0.5rem;
+  padding: 0.9rem;
+}
+.measure-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(8rem, 1fr)) repeat(
+      3,
+      minmax(7rem, 0.8fr)
+    ) auto;
   gap: 0.5rem;
   padding: 0.9rem;
 }
@@ -1309,6 +1384,7 @@
     max-height: 28rem;
   }
   .calc-form,
+  .measure-form,
   .model-form,
   .query-step-form {
     grid-template-columns: 1fr;

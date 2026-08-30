@@ -91,6 +91,19 @@ async function parseXml(file: File): Promise<DataTable[]> {
   return [tableFromRows(root.tagName, rows, 'xml', file.name)];
 }
 
+async function parseParquet(file: File): Promise<DataTable[]> {
+  const [{ parquetReadObjects }, { compressors }] = await Promise.all([
+    import('hyparquet'),
+    import('hyparquet-compressors'),
+  ]);
+  const rows = await parquetReadObjects({
+    file: await file.arrayBuffer(),
+    compressors,
+    rowEnd: MAX_ROWS + 1,
+  });
+  return [tableFromRows(file.name, rows, 'parquet', file.name)];
+}
+
 async function parseWorkbook(file: File): Promise<DataTable[]> {
   const XLSX = await import('xlsx');
   const workbook = XLSX.read(await file.arrayBuffer());
@@ -139,11 +152,14 @@ export async function parseDataFile(file: File): Promise<DataTable[]> {
     return parseJson(file);
   if (extension === 'xml' || file.type === 'application/xml')
     return parseXml(file);
+  if (extension === 'parquet') return parseParquet(file);
   if (extension === 'xlsx' || extension === 'xls' || extension === 'xlsm') {
     return parseWorkbook(file);
   }
   if (extension === 'sqlite' || extension === 'sqlite3' || extension === 'db') {
     return parseSqlite(file);
   }
-  throw new Error('Supported formats: CSV, JSON, XML, Excel, and SQLite.');
+  throw new Error(
+    'Supported formats: CSV, JSON, XML, Parquet, Excel, and SQLite.',
+  );
 }

@@ -11,7 +11,9 @@ export type QuickCalculation =
   | 'none'
   | 'running-total'
   | 'percent-of-total'
-  | 'difference';
+  | 'difference'
+  | 'percent-change'
+  | 'rank';
 
 export type Field = {
   name: string;
@@ -40,10 +42,22 @@ export function normalizeRows(input: Record<string, unknown>[]): DataRow[] {
         normalized[key.trim()] = Number(value.replaceAll(',', ''));
       } else if (typeof value === 'number') {
         normalized[key.trim()] = value;
+      } else if (typeof value === 'bigint') {
+        normalized[key.trim()] = Number.isSafeInteger(Number(value))
+          ? Number(value)
+          : value.toString();
+      } else if (typeof value === 'boolean') {
+        normalized[key.trim()] = String(value);
+      } else if (value instanceof Date) {
+        normalized[key.trim()] = value.toISOString();
+      } else if (value instanceof Uint8Array) {
+        normalized[key.trim()] = `[binary ${value.byteLength} bytes]`;
       } else if (typeof value === 'string') {
         normalized[key.trim()] = String(value);
       } else {
-        normalized[key.trim()] = JSON.stringify(value);
+        normalized[key.trim()] = JSON.stringify(value, (_, nested) =>
+          typeof nested === 'bigint' ? nested.toString() : nested,
+        );
       }
     }
     return normalized;
@@ -155,6 +169,26 @@ export function applyQuickCalculation(
   if (calculation === 'running-total') {
     let total = 0;
     return points.map((point) => ({ ...point, value: (total += point.value) }));
+  }
+  if (calculation === 'rank') {
+    const ranks = new Map(
+      [...points]
+        .sort((left, right) => right.value - left.value)
+        .map((point, index) => [point.label, index + 1]),
+    );
+    return points.map((point) => ({
+      ...point,
+      value: ranks.get(point.label) ?? 0,
+    }));
+  }
+  if (calculation === 'percent-change') {
+    return points.map((point, index) => {
+      const previous = points[index - 1]?.value;
+      return {
+        ...point,
+        value: previous ? (point.value - previous) / Math.abs(previous) : 0,
+      };
+    });
   }
   return points.map((point, index) => ({
     ...point,

@@ -38,6 +38,24 @@ const PIE_COLORS = [
 
 const subscribeToHydration = () => () => {};
 
+function mixHex(low: string, high: string, ratio: number): string {
+  const parse = (color: string) => {
+    const hex = color.replace('#', '').padEnd(6, '0');
+    return [0, 2, 4].map((offset) =>
+      Number.parseInt(hex.slice(offset, offset + 2), 16),
+    );
+  };
+  const left = parse(low);
+  const right = parse(high);
+  return `#${left
+    .map((channel, index) =>
+      Math.round(channel + (right[index] - channel) * ratio)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')}`;
+}
+
 export function formatVisualValue(value: number, format: NumberFormat): string {
   if (format === 'currency') {
     return new Intl.NumberFormat('en-US', {
@@ -51,7 +69,7 @@ export function formatVisualValue(value: number, format: NumberFormat): string {
     return new Intl.NumberFormat('en-US', {
       style: 'percent',
       maximumFractionDigits: 1,
-    }).format(value / 100);
+    }).format(value);
   }
   return new Intl.NumberFormat('en-US', {
     notation: format === 'compact' ? 'compact' : 'standard',
@@ -76,6 +94,18 @@ export function ChartVisual({
     () => false,
   );
   const total = points.reduce((sum, point) => sum + point.value, 0);
+  const minimum = Math.min(...points.map((point) => point.value));
+  const maximum = Math.max(...points.map((point) => point.value));
+  const conditionalColor = (value: number) => {
+    if (!widget.conditionalFormatting) return widget.color;
+    const ratio =
+      maximum === minimum ? 1 : (value - minimum) / (maximum - minimum);
+    return mixHex(
+      widget.conditionalMinColor ?? '#dbeafe',
+      widget.conditionalMaxColor ?? widget.color,
+      Math.max(0, Math.min(1, ratio)),
+    );
+  };
   if (!hydrated) {
     return (
       <div className="h-full min-h-0 w-full animate-pulse rounded-lg bg-muted" />
@@ -182,7 +212,15 @@ export function ChartVisual({
             {points.slice(0, 100).map((point) => (
               <tr key={point.label} onClick={() => onPointClick?.(point.label)}>
                 <td>{point.label}</td>
-                <td>{formatVisualValue(point.value, widget.numberFormat)}</td>
+                <td
+                  style={
+                    widget.conditionalFormatting
+                      ? { backgroundColor: conditionalColor(point.value) }
+                      : undefined
+                  }
+                >
+                  {formatVisualValue(point.value, widget.numberFormat)}
+                </td>
                 {widget.kind === 'matrix' && (
                   <td>
                     {total

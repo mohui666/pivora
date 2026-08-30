@@ -28,18 +28,19 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 
 ## Highlights
 
-|     | Capability               | What it gives you                                                                                 |
-| --- | ------------------------ | ------------------------------------------------------------------------------------------------- |
-| 📥  | **Multi-format import**  | CSV, JSON, XML, Excel (`.xlsx`, `.xls`, `.xlsm`), and SQLite (`.db`, `.sqlite`)                   |
-| 🧹  | **Data preparation**     | Ordered query steps, type overrides, trimming, null filling, column removal, search, and previews |
-| 🧩  | **Semantic modeling**    | Cardinality-aware relationships, filter direction, calculated fields, and quick calculations      |
-| 📊  | **Visual authoring**     | 14 visual types, secondary measures, sorting, Top N, formatting, and cross-filtering              |
-| ✨  | **Report authoring**     | Multi-page canvas, drag/resize, themes, bookmarks, hidden pages/visuals, undo, and redo           |
-| 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                    |
-| 📦  | **Portable output**      | Import/export `.llbi` report bundles and export dashboards as PNG or PDF                          |
-| 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals                       |
-| 👥  | **Workflow roles**       | Owner, Editor, and Viewer modes for previewing report workflows                                   |
-| 🌗  | **Refined UI**           | Responsive layout, dark mode, accessible controls, and a ready-to-use sample report               |
+|     | Capability               | What it gives you                                                                                   |
+| --- | ------------------------ | --------------------------------------------------------------------------------------------------- |
+| 📥  | **Multi-format import**  | CSV, JSON, XML, Parquet, Excel, SQLite, and whole-folder batch selection                            |
+| 🧹  | **Data preparation**     | 10 ordered query operations, type cleaning, custom columns, grouping, search, and previews          |
+| 🧩  | **Semantic modeling**    | Cardinality-aware relationships, calculated fields, reusable measures, and quick calculations       |
+| 📊  | **Visual authoring**     | 14 visuals, hierarchies, drill controls, conditional scales, secondary measures, sorting, and Top N |
+| ✨  | **Report authoring**     | Multi-page canvas, drag/resize, themes, bookmarks, hidden pages/visuals, undo, and redo             |
+| 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                      |
+| 📦  | **Portable output**      | Import/export `.llbi`, active-page PNG, and one PDF containing every visible report page            |
+| ⏱️  | **Performance analyzer** | Measure local aggregation time, input rows, and output points for every visual on a page            |
+| 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals                         |
+| 👥  | **Workflow roles**       | Owner, Editor, and Viewer modes for previewing report workflows                                     |
+| 🌗  | **Refined UI**           | Responsive layout, dark mode, accessible controls, and a ready-to-use sample report                 |
 
 ## See the workflow
 
@@ -103,11 +104,12 @@ No Sites binding, hosted service, or external database is required.
 LocalLens uses a deliberately compact semantic layer:
 
 - **Tables** preserve normalized local rows and their source metadata.
-- **Query steps** form an ordered non-destructive pipeline: filter, sort, remove duplicates, keep first rows, and add index.
+- **Query steps** form an ordered non-destructive pipeline: filter, sort, remove duplicates, keep first rows, add index, replace, rename, split, create custom columns, and group/aggregate.
 - **Transforms** override types, trim strings, fill blanks, or exclude columns during materialization.
 - **Relationships** support one-to-one, one-to-many, many-to-one, and many-to-many cardinalities, active state, and single/bidirectional filtering.
 - **Calculated fields** use bracketed column references and a safe expression evaluator.
-- **Aggregations** include sum, average, count, distinct count, minimum, and maximum, followed by optional running total, percent-of-total, or previous-period difference.
+- **Reusable measures** centralize field aggregation, number format, and calculation behavior for use across visuals.
+- **Aggregations** include sum, average, count, distinct count, minimum, and maximum, followed by optional running total, percent-of-total, previous-period difference, percent change, or ranking.
 - **Filters** can flow from a visual to fields exposed through related tables.
 - **Pages, bookmarks, and themes** capture presentation state without changing source data.
 - **Widgets** store query configuration, visibility, formatting, interactions, and responsive grid layout.
@@ -129,12 +131,14 @@ Browser
 │   ├── SheetJS           → Excel
 │   ├── JSON parser       → JSON collections
 │   ├── DOM parser        → XML collections
+│   ├── Hyparquet         → Parquet + compression codecs
 │   └── sql.js + WASM     → SQLite
 ├── Local semantic engine
 │   ├── transforms
 │   ├── ordered query steps
 │   ├── relationships
 │   ├── calculated fields
+│   ├── reusable measures
 │   ├── quick calculations
 │   └── cross-filters
 ├── React analytics studio
@@ -206,11 +210,12 @@ These constraints keep the project private-by-default, understandable, and easy 
 - [x] Multi-page reports, bookmarks, themes, and undo/redo
 - [x] Matrix, scatter, funnel, waterfall, treemap, gauge, combo, and slicer visuals
 - [x] Ordered query steps and extended/quick calculations
+- [x] Parquet, folder import, reusable measures, drill hierarchies, conditional scales, and performance analysis
 - [ ] Lazy-load heavy import/export adapters for a smaller initial bundle
 - [ ] Add relationship cardinality diagnostics
-- [ ] Add drill hierarchies, conditional formatting, and multi-page PDF export
+- [x] Add drill hierarchies, conditional formatting, and multi-page PDF export
 - [ ] Add optional DuckDB-WASM support for larger analytical workloads
-- [ ] Add Parquet, folder, and opt-in web/API connectors
+- [ ] Add opt-in web/API, ODBC-style bridge, and data-lake connectors
 - [ ] Add repeatable end-to-end browser tests for import, authoring, and export flows
 - [ ] Add internationalization
 

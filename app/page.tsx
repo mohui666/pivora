@@ -2,6 +2,9 @@
 
 import { toPng } from 'html-to-image';
 import {
+  ArrowUpFromLine,
+  ArrowDownToLine,
+  Activity,
   BookmarkPlus,
   BookOpen,
   Calculator,
@@ -11,6 +14,7 @@ import {
   FilePlus2,
   FileSpreadsheet,
   Filter,
+  FolderOpen,
   GripHorizontal,
   ImageDown,
   LayoutDashboard,
@@ -59,6 +63,7 @@ import {
   applyQuickCalculation,
   type Aggregation,
   inferFields,
+  type QuickCalculation,
 } from '@/lib/analytics';
 import {
   createId,
@@ -81,6 +86,7 @@ import type {
   ReportPage,
   ReportRole,
   ReportSummary,
+  SemanticMeasure,
 } from '@/lib/bi-types';
 import { parseDataFile } from '@/lib/data-import';
 import { REPORT_THEMES, upgradeReport } from '@/lib/report-schema';
@@ -94,6 +100,12 @@ import { createSampleReport } from '@/lib/sample-report';
 
 type View = 'dashboard' | 'data' | 'model';
 type LocalFileHandle = { name: string; getFile: () => Promise<File> };
+type VisualPerformance = {
+  durationMs: number;
+  inputRows: number;
+  outputPoints: number;
+  measuredAt: string;
+};
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
@@ -133,6 +145,30 @@ function defaultWidget(
   };
 }
 
+function describeQueryStep(step: QueryStep): string {
+  if (step.kind === 'filter')
+    return `${step.field} · ${step.operator} ${step.value}`;
+  if (step.kind === 'sort') return `${step.field} · ${step.direction}`;
+  if (step.kind === 'remove-duplicates') return step.field;
+  if (step.kind === 'limit') return `${step.count} rows`;
+  if (step.kind === 'add-index') return `${step.name} from ${step.start}`;
+  if (step.kind === 'replace-values')
+    return `${step.field}: ${step.value} → ${step.replacement ?? ''}`;
+  if (step.kind === 'rename-column') return `${step.field} → ${step.name}`;
+  if (step.kind === 'split-column')
+    return `${step.field} by “${step.separator || ','}”`;
+  if (step.kind === 'custom-column') return `${step.name} = ${step.value}`;
+  return `${step.field} · ${step.aggregation ?? 'sum'}(${step.targetField}) → ${step.name}`;
+}
+
+function effectiveDimension(widget: ChartWidget): string {
+  return (
+    widget.hierarchy?.[
+      Math.min(widget.drillLevel ?? 0, widget.hierarchy.length - 1)
+    ] ?? widget.dimension
+  );
+}
+
 type ReportHistory = {
   past: ReportDocument[];
   present: ReportDocument;
@@ -154,6 +190,10 @@ export default function Home() {
   const [notice, setNotice] = useState('');
   const [importing, setImporting] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [showPerformance, setShowPerformance] = useState(false);
+  const [performanceProfiles, setPerformanceProfiles] = useState<
+    Record<string, VisualPerformance>
+  >({});
   const [savedReports, setSavedReports] = useState<ReportSummary[]>([]);
   const [dataPage, setDataPage] = useState(0);
   const [dataSearch, setDataSearch] = useState('');
@@ -171,6 +211,16 @@ export default function Home() {
     name: '',
     expression: '',
   });
+  const [measureDraft, setMeasureDraft] = useState<Omit<SemanticMeasure, 'id'>>(
+    {
+      tableId: 'table_sales',
+      name: '',
+      field: 'revenue',
+      aggregation: 'sum',
+      calculation: 'none',
+      numberFormat: 'compact',
+    },
+  );
   const [queryDraft, setQueryDraft] = useState<
     Pick<
       QueryStep,
@@ -182,6 +232,10 @@ export default function Home() {
       | 'count'
       | 'name'
       | 'start'
+      | 'replacement'
+      | 'separator'
+      | 'targetField'
+      | 'aggregation'
     >
   >({
     kind: 'filter',
@@ -192,8 +246,13 @@ export default function Home() {
     count: 1000,
     name: 'Index',
     start: 1,
+    replacement: '',
+    separator: ',',
+    targetField: 'revenue',
+    aggregation: 'sum',
   });
   const dataInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
   const reportInput = useRef<HTMLInputElement>(null);
   const dashboardRef = useRef<HTMLDivElement>(null);
   const fileHandles = useRef(new Map<string, LocalFileHandle>());
@@ -210,6 +269,9 @@ export default function Home() {
     report.tables[0];
   const selectedWidget = report.widgets.find(
     (widget) => widget.id === selectedWidgetId,
+  );
+  const selectedSemanticMeasure = report.measures.find(
+    (measure) => measure.id === selectedWidget?.measure,
   );
   const activePage =
     report.pages.find((page) => page.id === activePageId) ?? report.pages[0];
@@ -416,26 +478,48 @@ export default function Home() {
         (filter) => filter.sourceWidgetId !== widget.id,
       );
       const filtered = filterRows(rows, filters, widget.tableId, report.tables);
+      const dimension = effectiveDimension(widget);
       const dimensionKind =
-        fieldsFor(widget.tableId).find(
-          (field) => field.name === widget.dimension,
-        )?.kind ?? 'text';
+        fieldsFor(widget.tableId).find((field) => field.name === dimension)
+          ?.kind ?? 'text';
+      const semanticMeasure = report.measures.find(
+        (measure) => measure.id === widget.measure,
+      );
       let points = aggregateRows({
         rows: filtered,
-        dimension: widget.dimension,
+        dimension,
         dimensionKind,
-        measure: widget.measure,
-        aggregation: widget.aggregation,
+        measure: semanticMeasure?.field ?? widget.measure,
+        aggregation: semanticMeasure?.aggregation ?? widget.aggregation,
       });
-      points = applyQuickCalculation(points, widget.calculation);
+      points = applyQuickCalculation(
+        points,
+        semanticMeasure?.calculation ?? widget.calculation,
+      );
       if (widget.sortDirection !== 'none') {
         const direction = widget.sortDirection === 'ascending' ? 1 : -1;
         points = [...points].sort((a, b) => (a.value - b.value) * direction);
       }
       return points.slice(0, Math.max(1, widget.topN ?? 20));
     },
-    [fieldsFor, materialized, report.filters, report.tables],
+    [fieldsFor, materialized, report.filters, report.measures, report.tables],
   );
+
+  function openPerformanceAnalyzer() {
+    const profiles: Record<string, VisualPerformance> = {};
+    for (const widget of pageWidgets) {
+      const startedAt = performance.now();
+      const points = pointsFor(widget);
+      profiles[widget.id] = {
+        durationMs: performance.now() - startedAt,
+        inputRows: materialized.get(widget.tableId)?.length ?? 0,
+        outputPoints: points.length,
+        measuredAt: new Date().toISOString(),
+      };
+    }
+    setPerformanceProfiles(profiles);
+    setShowPerformance(true);
+  }
 
   const refreshLibrary = useCallback(async () => {
     setSavedReports(await listReports());
@@ -544,6 +628,11 @@ export default function Home() {
     }
   }
 
+  function chooseDataFolder() {
+    if (!canEdit) return;
+    folderInput.current?.click();
+  }
+
   async function refreshSources(silent = false) {
     const handles = Array.from(fileHandles.current.values());
     if (!handles.length) {
@@ -625,12 +714,12 @@ export default function Home() {
 
   function applyCrossFilter(widget: ChartWidget, value: string) {
     if (!widget.interactions) return;
-    const [prefix, ...rest] = widget.dimension.split('.');
+    const [prefix, ...rest] = effectiveDimension(widget).split('.');
     const related = rest.length
       ? report.tables.find((table) => table.name === prefix)
       : undefined;
     const tableId = related?.id ?? widget.tableId;
-    const field = related ? rest.join('.') : widget.dimension;
+    const field = related ? rest.join('.') : effectiveDimension(widget);
     updateReport((current) => {
       const previous = current.filters.find(
         (filter) => filter.sourceWidgetId === widget.id,
@@ -653,6 +742,57 @@ export default function Home() {
         ],
       };
     });
+  }
+
+  function applyVisualPoint(widget: ChartWidget, value: string) {
+    const level = widget.drillLevel ?? 0;
+    const hierarchy = widget.hierarchy ?? [];
+    if (hierarchy[level + 1]) {
+      updateReport((current) => ({
+        ...current,
+        widgets: current.widgets.map((candidate) =>
+          candidate.id === widget.id
+            ? { ...candidate, drillLevel: level + 1 }
+            : candidate,
+        ),
+        filters: [
+          ...current.filters.filter(
+            (filter) => filter.sourceWidgetId !== `${widget.id}:drill:${level}`,
+          ),
+          {
+            id: createId('filter'),
+            tableId: widget.tableId,
+            field: hierarchy[level] ?? widget.dimension,
+            value,
+            sourceWidgetId: `${widget.id}:drill:${level}`,
+          },
+        ],
+      }));
+      return;
+    }
+    applyCrossFilter(widget, value);
+  }
+
+  function drillUp(widget: ChartWidget) {
+    const level = widget.drillLevel ?? 0;
+    if (!level) return;
+    updateReport((current) => ({
+      ...current,
+      widgets: current.widgets.map((candidate) =>
+        candidate.id === widget.id
+          ? { ...candidate, drillLevel: level - 1 }
+          : candidate,
+      ),
+      filters: current.filters.filter(
+        (filter) => filter.sourceWidgetId !== `${widget.id}:drill:${level - 1}`,
+      ),
+    }));
+  }
+
+  function drillNext(widget: ChartWidget) {
+    const level = widget.drillLevel ?? 0;
+    if (!widget.hierarchy?.[level + 1]) return;
+    updateWidget(widget.id, { drillLevel: level + 1 });
   }
 
   function updateLayout(layout: Layout) {
@@ -748,13 +888,41 @@ export default function Home() {
     showNotice('Calculated field added.');
   }
 
+  function addSemanticMeasure() {
+    if (!canEdit || !measureDraft.name.trim()) {
+      return showNotice('Name the reusable measure.');
+    }
+    const measure: SemanticMeasure = {
+      id: createId('measure'),
+      ...measureDraft,
+      name: measureDraft.name.trim(),
+    };
+    updateReport((current) => ({
+      ...current,
+      measures: [...current.measures, measure],
+    }));
+    setMeasureDraft((current) => ({ ...current, name: '' }));
+    showNotice('Reusable measure added to the semantic model.');
+  }
+
   function addQueryStep() {
     if (!canEdit || !activeTable) return;
     if (
-      ['filter', 'sort', 'remove-duplicates'].includes(queryDraft.kind) &&
+      !['limit', 'add-index', 'custom-column'].includes(queryDraft.kind) &&
       !queryDraft.field
     ) {
       return showNotice('Choose a field for this query step.');
+    }
+    if (queryDraft.kind === 'custom-column') {
+      if (!queryDraft.name.trim()) return showNotice('Name the custom column.');
+      const error = validateCalculatedExpression(queryDraft.value);
+      if (error) return showNotice(error);
+    }
+    if (
+      ['rename-column', 'split-column', 'group-by'].includes(queryDraft.kind) &&
+      !queryDraft.name.trim()
+    ) {
+      return showNotice('Name the output column.');
     }
     const step: QueryStep = {
       id: createId('query'),
@@ -830,6 +998,59 @@ export default function Home() {
     pdf.save(`${report.name}.pdf`);
   }
 
+  async function exportAllPagesPdf() {
+    const pages = report.pages.filter((page) => !page.hidden);
+    if (!dashboardRef.current || !pages.length) return;
+    const originalPageId = activePage?.id ?? pages[0].id;
+    showNotice(`Rendering ${pages.length} report pages…`);
+    const captures: { dataUrl: string; width: number; height: number }[] = [];
+    try {
+      for (const page of pages) {
+        setActivePageId(page.id);
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        );
+        if (!dashboardRef.current) continue;
+        const dataUrl = await toPng(dashboardRef.current, {
+          cacheBust: true,
+          pixelRatio: 2,
+          backgroundColor: page.background,
+        });
+        const image = new Image();
+        await new Promise<void>((resolve) => {
+          image.onload = () => resolve();
+          image.src = dataUrl;
+        });
+        captures.push({ dataUrl, width: image.width, height: image.height });
+      }
+      const first = captures[0];
+      if (!first) return;
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({
+        orientation: 'landscape',
+        unit: 'px',
+        format: [first.width, first.height],
+      });
+      captures.forEach((capture, index) => {
+        if (index) {
+          pdf.addPage([capture.width, capture.height], 'landscape');
+        }
+        pdf.addImage(
+          capture.dataUrl,
+          'PNG',
+          0,
+          0,
+          capture.width,
+          capture.height,
+        );
+      });
+      pdf.save(`${report.name}-all-pages.pdf`);
+      showNotice(`Exported ${captures.length} pages to PDF.`);
+    } finally {
+      setActivePageId(originalPageId);
+    }
+  }
+
   const activeRows = materialized.get(activeTable?.id ?? '') ?? [];
   const activeFields = materializedFields(activeRows);
   const searchedRows = dataSearch
@@ -860,11 +1081,27 @@ export default function Home() {
         ref={dataInput}
         type="file"
         multiple
-        accept=".csv,.json,.xml,.xlsx,.xls,.xlsm,.sqlite,.sqlite3,.db"
+        accept=".csv,.json,.xml,.parquet,.xlsx,.xls,.xlsm,.sqlite,.sqlite3,.db"
         className="sr-only"
         onChange={(event) =>
           void mergeFiles(Array.from(event.target.files ?? []))
         }
+      />
+      <input
+        ref={folderInput}
+        type="file"
+        multiple
+        className="sr-only"
+        {...({
+          webkitdirectory: '',
+        } as React.InputHTMLAttributes<HTMLInputElement>)}
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []).filter((file) =>
+            /\.(csv|json|xml|parquet|xlsx?|xlsm|sqlite3?|db)$/i.test(file.name),
+          );
+          void mergeFiles(files);
+          event.target.value = '';
+        }}
       />
       <input
         ref={reportInput}
@@ -1130,6 +1367,18 @@ export default function Home() {
                   <Button
                     variant="outline"
                     size="sm"
+                    onClick={
+                      showPerformance
+                        ? () => setShowPerformance(false)
+                        : openPerformanceAnalyzer
+                    }
+                  >
+                    <Activity />
+                    Performance
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => void exportDashboard('png')}
                   >
                     <ImageDown />
@@ -1138,13 +1387,50 @@ export default function Home() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void exportDashboard('pdf')}
+                    onClick={() => void exportAllPagesPdf()}
                   >
                     <FileDown />
-                    PDF
+                    PDF all
                   </Button>
                 </div>
               </div>
+
+              {showPerformance && (
+                <section className="performance-panel">
+                  <header>
+                    <div>
+                      <strong>Visual performance analyzer</strong>
+                      <small>
+                        Last local aggregation pass; rendering and export time
+                        are excluded.
+                      </small>
+                    </div>
+                    <button
+                      aria-label="Close performance analyzer"
+                      onClick={() => setShowPerformance(false)}
+                    >
+                      <X />
+                    </button>
+                  </header>
+                  <div>
+                    {pageWidgets.map((widget) => {
+                      const profile = performanceProfiles[widget.id];
+                      return (
+                        <article key={widget.id}>
+                          <span>{widget.title}</span>
+                          <strong>
+                            {profile?.durationMs.toFixed(2) ?? '—'} ms
+                          </strong>
+                          <small>
+                            {(profile?.inputRows ?? 0).toLocaleString()} rows →{' '}
+                            {profile?.outputPoints ?? 0} points
+                          </small>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
 
               <div className="report-page-bar">
                 <div
@@ -1302,32 +1588,67 @@ export default function Home() {
                               <GripHorizontal />
                               <span>{widget.title}</span>
                             </button>
-                            {canEdit && (
+                            {(canEdit ||
+                              (widget.drillLevel ?? 0) > 0 ||
+                              !!widget.hierarchy?.[
+                                (widget.drillLevel ?? 0) + 1
+                              ]) && (
                               <div className="visual-actions">
-                                <button
-                                  aria-label="Duplicate"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    duplicateWidget(widget);
-                                  }}
-                                >
-                                  <Copy />
-                                </button>
-                                <button
-                                  aria-label="Delete"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    removeWidget(widget.id);
-                                  }}
-                                >
-                                  <Trash2 />
-                                </button>
+                                {widget.hierarchy?.[
+                                  (widget.drillLevel ?? 0) + 1
+                                ] && (
+                                  <button
+                                    aria-label="Drill to next level"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      drillNext(widget);
+                                    }}
+                                  >
+                                    <ArrowDownToLine />
+                                  </button>
+                                )}
+                                {(widget.drillLevel ?? 0) > 0 && (
+                                  <button
+                                    aria-label="Drill up"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      drillUp(widget);
+                                    }}
+                                  >
+                                    <ArrowUpFromLine />
+                                  </button>
+                                )}
+                                {canEdit && (
+                                  <>
+                                    <button
+                                      aria-label="Duplicate"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        duplicateWidget(widget);
+                                      }}
+                                    >
+                                      <Copy />
+                                    </button>
+                                    <button
+                                      aria-label="Delete"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        removeWidget(widget.id);
+                                      }}
+                                    >
+                                      <Trash2 />
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             )}
                           </header>
                           <div className="visual-body">
                             <ChartVisual
-                              widget={widget}
+                              widget={{
+                                ...widget,
+                                dimension: effectiveDimension(widget),
+                              }}
                               points={pointsFor(widget)}
                               secondaryPoints={
                                 widget.secondaryMeasure
@@ -1338,7 +1659,7 @@ export default function Home() {
                                   : undefined
                               }
                               onPointClick={(value) =>
-                                applyCrossFilter(widget, value)
+                                applyVisualPoint(widget, value)
                               }
                             />
                           </div>
@@ -1381,6 +1702,15 @@ export default function Home() {
                     <Upload />
                     Add source
                   </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={chooseDataFolder}
+                    disabled={!canEdit}
+                  >
+                    <FolderOpen />
+                    Add folder
+                  </Button>
                 </div>
               </div>
 
@@ -1391,8 +1721,8 @@ export default function Home() {
                     <div>
                       <strong>Applied query steps</strong>
                       <small>
-                        Filter, sort, deduplicate, limit, and add an index in
-                        order.
+                        Build an ordered, repeatable preparation pipeline
+                        without changing the source.
                       </small>
                     </div>
                   </div>
@@ -1422,10 +1752,31 @@ export default function Home() {
                       <NativeSelectOption value="add-index">
                         Add index
                       </NativeSelectOption>
+                      <NativeSelectOption value="replace-values">
+                        Replace values
+                      </NativeSelectOption>
+                      <NativeSelectOption value="rename-column">
+                        Rename column
+                      </NativeSelectOption>
+                      <NativeSelectOption value="split-column">
+                        Split column
+                      </NativeSelectOption>
+                      <NativeSelectOption value="custom-column">
+                        Custom column
+                      </NativeSelectOption>
+                      <NativeSelectOption value="group-by">
+                        Group by
+                      </NativeSelectOption>
                     </NativeSelect>
-                    {['filter', 'sort', 'remove-duplicates'].includes(
-                      queryDraft.kind,
-                    ) && (
+                    {[
+                      'filter',
+                      'sort',
+                      'remove-duplicates',
+                      'replace-values',
+                      'rename-column',
+                      'split-column',
+                      'group-by',
+                    ].includes(queryDraft.kind) && (
                       <NativeSelect
                         value={queryDraft.field}
                         disabled={!canEdit}
@@ -1561,6 +1912,170 @@ export default function Home() {
                         />
                       </>
                     )}
+                    {queryDraft.kind === 'replace-values' && (
+                      <>
+                        <input
+                          className="form-input"
+                          placeholder="Find"
+                          value={queryDraft.value}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              value: event.target.value,
+                            }))
+                          }
+                        />
+                        <input
+                          className="form-input"
+                          placeholder="Replace with"
+                          value={queryDraft.replacement}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              replacement: event.target.value,
+                            }))
+                          }
+                        />
+                      </>
+                    )}
+                    {queryDraft.kind === 'rename-column' && (
+                      <input
+                        className="form-input"
+                        placeholder="New column name"
+                        value={queryDraft.name}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setQueryDraft((draft) => ({
+                            ...draft,
+                            name: event.target.value,
+                          }))
+                        }
+                      />
+                    )}
+                    {queryDraft.kind === 'split-column' && (
+                      <>
+                        <input
+                          className="form-input"
+                          placeholder="Separator"
+                          value={queryDraft.separator}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              separator: event.target.value,
+                            }))
+                          }
+                        />
+                        <input
+                          className="form-input"
+                          placeholder="Output prefix"
+                          value={queryDraft.name}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              name: event.target.value,
+                            }))
+                          }
+                        />
+                      </>
+                    )}
+                    {queryDraft.kind === 'custom-column' && (
+                      <>
+                        <input
+                          className="form-input"
+                          placeholder="Column name"
+                          value={queryDraft.name}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              name: event.target.value,
+                            }))
+                          }
+                        />
+                        <input
+                          className="form-input font-mono"
+                          placeholder="[revenue] - [cost]"
+                          value={queryDraft.value}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              value: event.target.value,
+                            }))
+                          }
+                        />
+                      </>
+                    )}
+                    {queryDraft.kind === 'group-by' && (
+                      <>
+                        <NativeSelect
+                          value={queryDraft.targetField}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              targetField: event.target.value,
+                            }))
+                          }
+                        >
+                          {rawActiveFields
+                            .filter((field) => field.kind === 'number')
+                            .map((field) => (
+                              <NativeSelectOption
+                                key={field.name}
+                                value={field.name}
+                              >
+                                {field.name}
+                              </NativeSelectOption>
+                            ))}
+                        </NativeSelect>
+                        <NativeSelect
+                          value={queryDraft.aggregation}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              aggregation: event.target.value as Aggregation,
+                            }))
+                          }
+                        >
+                          <NativeSelectOption value="sum">
+                            Sum
+                          </NativeSelectOption>
+                          <NativeSelectOption value="average">
+                            Average
+                          </NativeSelectOption>
+                          <NativeSelectOption value="count">
+                            Count
+                          </NativeSelectOption>
+                          <NativeSelectOption value="minimum">
+                            Minimum
+                          </NativeSelectOption>
+                          <NativeSelectOption value="maximum">
+                            Maximum
+                          </NativeSelectOption>
+                          <NativeSelectOption value="distinct-count">
+                            Distinct count
+                          </NativeSelectOption>
+                        </NativeSelect>
+                        <input
+                          className="form-input"
+                          placeholder="Output measure"
+                          value={queryDraft.name}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              name: event.target.value,
+                            }))
+                          }
+                        />
+                      </>
+                    )}
                     <Button
                       size="sm"
                       onClick={addQueryStep}
@@ -1576,17 +2091,7 @@ export default function Home() {
                         <div key={step.id}>
                           <span>{index + 1}</span>
                           <strong>{step.kind.replaceAll('-', ' ')}</strong>
-                          <small>
-                            {step.kind === 'filter'
-                              ? `${step.field} · ${step.operator} ${step.value}`
-                              : step.kind === 'sort'
-                                ? `${step.field} · ${step.direction}`
-                                : step.kind === 'remove-duplicates'
-                                  ? step.field
-                                  : step.kind === 'limit'
-                                    ? `${step.count} rows`
-                                    : `${step.name} from ${step.start}`}
-                          </small>
+                          <small>{describeQueryStep(step)}</small>
                           <label>
                             <input
                               type="checkbox"
@@ -2101,6 +2606,178 @@ export default function Home() {
                   </div>
                 </section>
 
+                <section className="model-section">
+                  <div className="panel-title">
+                    <Calculator />
+                    <div>
+                      <strong>Reusable measures</strong>
+                      <small>
+                        Centralize aggregation, formatting, and time-style
+                        calculations.
+                      </small>
+                    </div>
+                  </div>
+                  <div className="measure-form">
+                    <NativeSelect
+                      value={measureDraft.tableId}
+                      onChange={(event) => {
+                        const tableId = event.target.value;
+                        const field = fieldsFor(tableId).find(
+                          (candidate) => candidate.kind === 'number',
+                        );
+                        setMeasureDraft((draft) => ({
+                          ...draft,
+                          tableId,
+                          field: field?.name ?? '__rows',
+                        }));
+                      }}
+                    >
+                      {report.tables.map((table) => (
+                        <NativeSelectOption key={table.id} value={table.id}>
+                          {table.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <input
+                      className="form-input"
+                      placeholder="Measure name"
+                      value={measureDraft.name}
+                      onChange={(event) =>
+                        setMeasureDraft((draft) => ({
+                          ...draft,
+                          name: event.target.value,
+                        }))
+                      }
+                    />
+                    <NativeSelect
+                      value={measureDraft.field}
+                      onChange={(event) =>
+                        setMeasureDraft((draft) => ({
+                          ...draft,
+                          field: event.target.value,
+                        }))
+                      }
+                    >
+                      {fieldsFor(measureDraft.tableId)
+                        .filter((field) => field.kind === 'number')
+                        .map((field) => (
+                          <NativeSelectOption
+                            key={field.name}
+                            value={field.name}
+                          >
+                            {field.name}
+                          </NativeSelectOption>
+                        ))}
+                      <NativeSelectOption value="__rows">
+                        Row count
+                      </NativeSelectOption>
+                    </NativeSelect>
+                    <NativeSelect
+                      value={measureDraft.aggregation}
+                      onChange={(event) =>
+                        setMeasureDraft((draft) => ({
+                          ...draft,
+                          aggregation: event.target.value as Aggregation,
+                        }))
+                      }
+                    >
+                      {[
+                        'sum',
+                        'average',
+                        'count',
+                        'minimum',
+                        'maximum',
+                        'distinct-count',
+                      ].map((aggregation) => (
+                        <NativeSelectOption
+                          key={aggregation}
+                          value={aggregation}
+                        >
+                          {aggregation.replace('-', ' ')}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <NativeSelect
+                      value={measureDraft.calculation}
+                      onChange={(event) =>
+                        setMeasureDraft((draft) => ({
+                          ...draft,
+                          calculation: event.target.value as QuickCalculation,
+                        }))
+                      }
+                    >
+                      {[
+                        'none',
+                        'running-total',
+                        'percent-of-total',
+                        'difference',
+                        'percent-change',
+                        'rank',
+                      ].map((calculation) => (
+                        <NativeSelectOption
+                          key={calculation}
+                          value={calculation}
+                        >
+                          {calculation.replaceAll('-', ' ')}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <NativeSelect
+                      value={measureDraft.numberFormat}
+                      onChange={(event) =>
+                        setMeasureDraft((draft) => ({
+                          ...draft,
+                          numberFormat: event.target.value as NumberFormat,
+                        }))
+                      }
+                    >
+                      {['compact', 'standard', 'currency', 'percent'].map(
+                        (format) => (
+                          <NativeSelectOption key={format} value={format}>
+                            {format}
+                          </NativeSelectOption>
+                        ),
+                      )}
+                    </NativeSelect>
+                    <Button onClick={addSemanticMeasure} disabled={!canEdit}>
+                      <Plus /> Add measure
+                    </Button>
+                  </div>
+                  <div className="model-list">
+                    {report.measures.map((measure) => (
+                      <div key={measure.id}>
+                        <Calculator />
+                        <span>
+                          <strong>{measure.name}</strong>
+                          <small>
+                            {measure.aggregation}({measure.field}) ·{' '}
+                            {measure.calculation}
+                          </small>
+                        </span>
+                        {canEdit && (
+                          <button
+                            onClick={() =>
+                              updateReport((current) => ({
+                                ...current,
+                                measures: current.measures.filter(
+                                  (candidate) => candidate.id !== measure.id,
+                                ),
+                                widgets: current.widgets.map((widget) =>
+                                  widget.measure === measure.id
+                                    ? { ...widget, measure: measure.field }
+                                    : widget,
+                                ),
+                              }))
+                            }
+                          >
+                            <Trash2 />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
                 <section className="model-section model-map">
                   <div className="panel-title">
                     <Database />
@@ -2317,15 +2994,54 @@ export default function Home() {
                   </NativeSelect>
                 </label>
                 <label>
+                  Drill hierarchy
+                  <input
+                    className="form-input"
+                    placeholder="region, product_id"
+                    key={`${selectedWidget.id}-hierarchy`}
+                    defaultValue={(selectedWidget.hierarchy ?? []).join(', ')}
+                    disabled={!canEdit}
+                    onBlur={(event) => {
+                      const hierarchy = event.target.value
+                        .split(',')
+                        .map((field) => field.trim())
+                        .filter((field) =>
+                          selectedFields.some(
+                            (candidate) => candidate.name === field,
+                          ),
+                        );
+                      updateReport((current) => ({
+                        ...current,
+                        widgets: current.widgets.map((widget) =>
+                          widget.id === selectedWidget.id
+                            ? { ...widget, hierarchy, drillLevel: 0 }
+                            : widget,
+                        ),
+                        filters: current.filters.filter(
+                          (filter) =>
+                            !filter.sourceWidgetId?.startsWith(
+                              `${selectedWidget.id}:drill:`,
+                            ),
+                        ),
+                      }));
+                    }}
+                  />
+                </label>
+                <label>
                   Measure
                   <NativeSelect
                     value={selectedWidget.measure}
                     disabled={!canEdit}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const measure = report.measures.find(
+                        (candidate) => candidate.id === event.target.value,
+                      );
                       updateWidget(selectedWidget.id, {
                         measure: event.target.value,
-                      })
-                    }
+                        numberFormat:
+                          measure?.numberFormat ?? selectedWidget.numberFormat,
+                      });
+                    }}
                   >
                     {selectedNumericFields.map((field) => (
                       <NativeSelectOption key={field.name} value={field.name}>
@@ -2335,6 +3051,15 @@ export default function Home() {
                     <NativeSelectOption value="__rows">
                       Row count
                     </NativeSelectOption>
+                    {report.measures
+                      .filter(
+                        (measure) => measure.tableId === selectedWidget.tableId,
+                      )
+                      .map((measure) => (
+                        <NativeSelectOption key={measure.id} value={measure.id}>
+                          ƒ {measure.name}
+                        </NativeSelectOption>
+                      ))}
                   </NativeSelect>
                 </label>
                 {(selectedWidget.kind === 'combo' ||
@@ -2358,6 +3083,19 @@ export default function Home() {
                           {field.name}
                         </NativeSelectOption>
                       ))}
+                      {report.measures
+                        .filter(
+                          (measure) =>
+                            measure.tableId === selectedWidget.tableId,
+                        )
+                        .map((measure) => (
+                          <NativeSelectOption
+                            key={measure.id}
+                            value={measure.id}
+                          >
+                            ƒ {measure.name}
+                          </NativeSelectOption>
+                        ))}
                     </NativeSelect>
                   </label>
                 )}
@@ -2381,8 +3119,11 @@ export default function Home() {
                 <div className="field-label">
                   <span>Aggregation</span>
                   <NativeSelect
-                    value={selectedWidget.aggregation}
-                    disabled={!canEdit}
+                    value={
+                      selectedSemanticMeasure?.aggregation ??
+                      selectedWidget.aggregation
+                    }
+                    disabled={!canEdit || !!selectedSemanticMeasure}
                     onChange={(event) =>
                       updateWidget(selectedWidget.id, {
                         aggregation: event.target.value as Aggregation,
@@ -2408,17 +3149,18 @@ export default function Home() {
                 <div className="field-label">
                   <span>Quick calculation</span>
                   <NativeSelect
-                    value={selectedWidget.calculation ?? 'none'}
-                    disabled={!canEdit}
+                    value={
+                      selectedSemanticMeasure?.calculation ??
+                      selectedWidget.calculation ??
+                      'none'
+                    }
+                    disabled={!canEdit || !!selectedSemanticMeasure}
                     onChange={(event) =>
                       updateWidget(selectedWidget.id, {
-                        calculation: event.target.value as
-                          | 'none'
-                          | 'running-total'
-                          | 'percent-of-total'
-                          | 'difference',
+                        calculation: event.target.value as QuickCalculation,
                         numberFormat:
-                          event.target.value === 'percent-of-total'
+                          event.target.value === 'percent-of-total' ||
+                          event.target.value === 'percent-change'
                             ? 'percent'
                             : selectedWidget.numberFormat,
                       })
@@ -2433,6 +3175,12 @@ export default function Home() {
                     </NativeSelectOption>
                     <NativeSelectOption value="difference">
                       Difference from previous
+                    </NativeSelectOption>
+                    <NativeSelectOption value="percent-change">
+                      Percent change
+                    </NativeSelectOption>
+                    <NativeSelectOption value="rank">
+                      Rank by value
                     </NativeSelectOption>
                   </NativeSelect>
                 </div>
@@ -2518,6 +3266,52 @@ export default function Home() {
                     }
                   />
                 </label>
+                <label className="inspector-check">
+                  <input
+                    type="checkbox"
+                    checked={selectedWidget.conditionalFormatting ?? false}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      updateWidget(selectedWidget.id, {
+                        conditionalFormatting: event.target.checked,
+                      })
+                    }
+                  />
+                  Conditional color scale
+                </label>
+                {selectedWidget.conditionalFormatting && (
+                  <div className="conditional-colors">
+                    <label>
+                      Low
+                      <input
+                        type="color"
+                        value={selectedWidget.conditionalMinColor ?? '#dbeafe'}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          updateWidget(selectedWidget.id, {
+                            conditionalMinColor: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label>
+                      High
+                      <input
+                        type="color"
+                        value={
+                          selectedWidget.conditionalMaxColor ??
+                          selectedWidget.color
+                        }
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          updateWidget(selectedWidget.id, {
+                            conditionalMaxColor: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                )}
                 <div className="check-grid">
                   <label>
                     <input

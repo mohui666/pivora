@@ -169,6 +169,7 @@ export function createSampleReport(): ReportDocument {
         expression: '[revenue] - [cost]',
       },
     ],
+    measures: [],
     transforms: [],
     querySteps: [],
     filters: [],

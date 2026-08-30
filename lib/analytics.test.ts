@@ -72,4 +72,12 @@ void test('supports extended aggregations and quick calculations', () => {
     { label: 'East', value: 0 },
     { label: 'West', value: -700 },
   ]);
+  assert.deepEqual(applyQuickCalculation(grouped, 'percent-change'), [
+    { label: 'East', value: 0 },
+    { label: 'West', value: -700 / 1200 },
+  ]);
+  assert.deepEqual(applyQuickCalculation(grouped, 'rank'), [
+    { label: 'East', value: 1 },
+    { label: 'West', value: 2 },
+  ]);
 });

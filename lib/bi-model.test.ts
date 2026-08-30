@@ -205,3 +205,62 @@ void test('applies ordered query steps without mutating source rows', () => {
   assert.equal(result[0]['Row number'], 10);
   assert.equal('Row number' in sales.rows[0], false);
 });
+
+void test('applies advanced replace, split, custom, and group query steps', () => {
+  const base = {
+    tableId: sales.id,
+    operator: 'equals' as const,
+    direction: 'ascending' as const,
+    count: 100,
+    start: 1,
+    enabled: true,
+  };
+  const prepared = applyQuerySteps(sales.rows, sales.id, [
+    {
+      ...base,
+      id: 'replace',
+      kind: 'replace-values',
+      field: 'product_id',
+      value: 'p',
+      replacement: 'SKU-',
+      name: '',
+    },
+    {
+      ...base,
+      id: 'split',
+      kind: 'split-column',
+      field: 'product_id',
+      value: '',
+      separator: '-',
+      name: 'product',
+    },
+    {
+      ...base,
+      id: 'custom',
+      kind: 'custom-column',
+      field: '',
+      value: '[cost] * 2',
+      name: 'double_cost',
+    },
+  ]);
+  assert.equal(prepared[0]['product.1'], 'SKU');
+  assert.equal(prepared[0]['product.2'], '1');
+  assert.equal(prepared[0].double_cost, 100);
+
+  const grouped = applyQuerySteps(sales.rows, sales.id, [
+    {
+      ...base,
+      id: 'group',
+      kind: 'group-by',
+      field: 'product_id',
+      targetField: 'cost',
+      aggregation: 'sum',
+      value: '',
+      name: 'total_cost',
+    },
+  ]);
+  assert.deepEqual(grouped, [
+    { product_id: 'p1', total_cost: 50 },
+    { product_id: 'p2', total_cost: 30 },
+  ]);
+});

@@ -28,6 +28,7 @@ void test('upgrades schema v2 reports with pages, themes, and visual defaults', 
   assert.equal(upgraded.widgets[0].calculation, 'none');
   assert.equal(upgraded.widgets[0].topN, 20);
   assert.equal(upgraded.theme.id, 'ocean');
+  assert.deepEqual(upgraded.measures, []);
 });
 
 void test('rejects unsupported report bundles', () => {

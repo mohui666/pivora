@@ -50,6 +50,7 @@ type LegacyReport = Omit<
   theme?: ReportTheme;
   widgets: LegacyWidget[];
   querySteps?: ReportDocument['querySteps'];
+  measures?: ReportDocument['measures'];
 };
 
 export function upgradeReport(value: unknown): ReportDocument {
@@ -82,6 +83,11 @@ export function upgradeReport(value: unknown): ReportDocument {
     calculation: widget.calculation ?? 'none',
     topN: widget.topN ?? 20,
     hidden: widget.hidden ?? false,
+    hierarchy: widget.hierarchy ?? [],
+    drillLevel: widget.drillLevel ?? 0,
+    conditionalFormatting: widget.conditionalFormatting ?? false,
+    conditionalMinColor: widget.conditionalMinColor ?? '#dbeafe',
+    conditionalMaxColor: widget.conditionalMaxColor ?? widget.color,
   }));
 
   return {
@@ -101,6 +107,7 @@ export function upgradeReport(value: unknown): ReportDocument {
       remove: transform.remove ?? false,
     })),
     querySteps: legacy.querySteps ?? [],
+    measures: legacy.measures ?? [],
     widgets,
   };
 }
