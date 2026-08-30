@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose an improvement that preserves the local-first model
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is difficult today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Does this change the privacy or persistence boundary?
+      options: [No, Yes, Unsure]
+    validations:
+      required: true
+  - type: textarea
+    id: boundary-details
+    attributes:
+      label: Privacy or persistence details
+      description: Required when the answer above is Yes or Unsure.
