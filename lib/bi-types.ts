@@ -68,6 +68,15 @@ export type CalculatedField = {
   expression: string;
 };
 
+export type ReportParameter = {
+  id: string;
+  name: string;
+  minimum: number;
+  maximum: number;
+  step: number;
+  value: number;
+};
+
 export type SemanticMeasure = {
   id: string;
   tableId: string;
@@ -129,7 +138,11 @@ export type ReportFilter = {
   id: string;
   tableId: string;
   field: string;
+  operator: QueryOperator;
   value: string;
+  scope: 'report' | 'page' | 'visual' | 'interaction';
+  pageId?: string;
+  widgetId?: string;
   sourceWidgetId?: string;
 };
 
@@ -183,6 +196,12 @@ export type ReportPage = {
   name: string;
   hidden: boolean;
   background: string;
+  drillthroughFields: Array<{
+    id: string;
+    tableId: string;
+    field: string;
+  }>;
+  keepAllFilters: boolean;
 };
 
 export type ReportBookmark = {
@@ -202,7 +221,7 @@ export type ReportTheme = {
 };
 
 export type ReportDocument = {
-  schemaVersion: 4;
+  schemaVersion: 5;
   id: string;
   name: string;
   createdAt: string;
@@ -215,6 +234,7 @@ export type ReportDocument = {
   tables: DataTable[];
   relationships: Relationship[];
   calculatedFields: CalculatedField[];
+  parameters: ReportParameter[];
   measures: SemanticMeasure[];
   transforms: ColumnTransform[];
   querySteps: QueryStep[];

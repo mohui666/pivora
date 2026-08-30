@@ -13,6 +13,7 @@ import type {
   QueryStep,
   Relationship,
   ReportFilter,
+  ReportParameter,
   ReportRole,
   RoleRule,
 } from './bi-types';
@@ -246,7 +247,11 @@ export function applyCalculatedFields(
   rows: DataRow[],
   tableId: string,
   fields: CalculatedField[],
+  parameters: ReportParameter[] = [],
 ): DataRow[] {
+  const parameterValues = new Map(
+    parameters.map((parameter) => [parameter.name, parameter.value]),
+  );
   const compiled = fields
     .filter((field) => field.tableId === tableId)
     .flatMap((field) => {
@@ -264,7 +269,9 @@ export function applyCalculatedFields(
         const scope = Object.fromEntries(
           Array.from(item.variables, ([alias, name]) => [
             alias,
-            next[name] ?? 0,
+            Object.hasOwn(next, name)
+              ? (next[name] ?? 0)
+              : (parameterValues.get(name) ?? 0),
           ]),
         );
         const result = item.expression.evaluate(scope) as unknown;
@@ -304,6 +311,7 @@ export function materializeTable({
   calculatedFields,
   transforms,
   querySteps = [],
+  parameters = [],
 }: {
   tableId: string;
   tables: DataTable[];
@@ -311,6 +319,7 @@ export function materializeTable({
   calculatedFields: CalculatedField[];
   transforms: ColumnTransform[];
   querySteps?: QueryStep[];
+  parameters?: ReportParameter[];
 }): DataRow[] {
   const table = tables.find((candidate) => candidate.id === tableId);
   if (!table) return [];
@@ -322,6 +331,7 @@ export function materializeTable({
     ),
     table.id,
     calculatedFields,
+    parameters,
   );
   const direct = relationships.filter(
     (relationship) =>
@@ -345,6 +355,7 @@ export function materializeTable({
       ),
       other.id,
       calculatedFields,
+      parameters,
     );
     const index = new Map<string, DataRow[]>();
     for (const row of otherRows) {
@@ -395,7 +406,12 @@ export function filterRows(
           filter.tableId === tableId
             ? filter.field
             : `${source?.name}.${filter.field}`;
-        return String(row[key] ?? 'Blank') === filter.value;
+        if (filter.tableId !== tableId && !(key in row)) return true;
+        return matchesOperator(
+          row[key],
+          filter.operator ?? 'equals',
+          filter.value,
+        );
       }) &&
       activeRoleRules.every((rule) => {
         const source = tables.find((table) => table.id === rule.tableId);
@@ -407,6 +423,61 @@ export function filterRows(
         return matchesOperator(row[key], rule.operator, rule.value);
       }),
   );
+}
+
+export function filtersForContext(
+  filters: ReportFilter[],
+  pageId: string,
+  widgetId: string,
+): ReportFilter[] {
+  return filters.filter((filter) => {
+    if (filter.scope === 'report') return true;
+    if (filter.scope === 'page') return filter.pageId === pageId;
+    if (filter.scope === 'visual') return filter.widgetId === widgetId;
+    return (
+      (!filter.pageId || filter.pageId === pageId) &&
+      filter.sourceWidgetId !== widgetId
+    );
+  });
+}
+
+export function filtersForDrillthrough(
+  filters: ReportFilter[],
+  sourcePageId: string,
+  sourceWidgetId: string,
+  targetPageId: string,
+  sourceFilterId: string,
+  keepAllFilters: boolean,
+): ReportFilter[] {
+  const sourceFilter = filters.find((filter) => filter.id === sourceFilterId);
+  if (!sourceFilter) return filters;
+  const transferable = keepAllFilters
+    ? filters.filter(
+        (filter) =>
+          filter.scope === 'report' ||
+          filter.id === sourceFilterId ||
+          (filter.scope === 'page' && filter.pageId === sourcePageId) ||
+          (filter.scope === 'interaction' &&
+            (!filter.pageId || filter.pageId === sourcePageId)) ||
+          (filter.scope === 'visual' && filter.widgetId === sourceWidgetId),
+      )
+    : [sourceFilter];
+  const transferred = transferable
+    .filter((filter) => filter.scope !== 'report')
+    .map((filter) => ({
+      ...filter,
+      id: `drillthrough_${filter.id}_${targetPageId}`,
+      scope: 'page' as const,
+      pageId: targetPageId,
+      widgetId: undefined,
+      sourceWidgetId: undefined,
+    }));
+  return [
+    ...filters.filter(
+      (filter) => !(filter.scope === 'page' && filter.pageId === targetPageId),
+    ),
+    ...transferred,
+  ];
 }
 
 export function validateRelationship(

@@ -65,12 +65,15 @@ import {
   applyQuickCalculation,
   type Aggregation,
   inferFields,
+  profileColumn,
   type QuickCalculation,
 } from '@/lib/analytics';
 import {
   analyzeRelationship,
   createId,
   filterRows,
+  filtersForContext,
+  filtersForDrillthrough,
   makeTable,
   materializedFields,
   materializeTable,
@@ -87,7 +90,9 @@ import type {
   QueryStep,
   Relationship,
   ReportDocument,
+  ReportFilter,
   ReportPage,
+  ReportParameter,
   ReportRole,
   ReportSummary,
   RoleRule,
@@ -167,6 +172,12 @@ function describeQueryStep(step: QueryStep): string {
   return `${step.field} · ${step.aggregation ?? 'sum'}(${step.targetField}) → ${step.name}`;
 }
 
+function formatProfileValue(value: number | undefined): string {
+  return value === undefined
+    ? '—'
+    : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 function effectiveDimension(widget: ChartWidget): string {
   return (
     widget.hierarchy?.[
@@ -197,12 +208,14 @@ export default function Home() {
   const [importing, setImporting] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
+  const [showFilterPane, setShowFilterPane] = useState(false);
   const [performanceProfiles, setPerformanceProfiles] = useState<
     Record<string, VisualPerformance>
   >({});
   const [savedReports, setSavedReports] = useState<ReportSummary[]>([]);
   const [dataPage, setDataPage] = useState(0);
   const [dataSearch, setDataSearch] = useState('');
+  const [profileField, setProfileField] = useState('revenue');
   const [sqlText, setSqlText] = useState(
     'SELECT region, SUM(revenue) AS revenue\nFROM "Sales"\nGROUP BY region\nORDER BY revenue DESC',
   );
@@ -215,6 +228,15 @@ export default function Home() {
   const [webTableName, setWebTableName] = useState('');
   const [webHeaders, setWebHeaders] = useState('');
   const [webLoading, setWebLoading] = useState(false);
+  const [filterDraft, setFilterDraft] = useState<
+    Pick<ReportFilter, 'tableId' | 'field' | 'operator' | 'value' | 'scope'>
+  >({
+    tableId: 'table_sales',
+    field: 'region',
+    operator: 'equals',
+    value: 'North',
+    scope: 'report',
+  });
   const [relationDraft, setRelationDraft] = useState<Omit<Relationship, 'id'>>({
     leftTableId: 'table_sales',
     leftField: 'product_id',
@@ -237,6 +259,19 @@ export default function Home() {
     tableId: 'table_sales',
     name: '',
     expression: '',
+  });
+  const [parameterDraft, setParameterDraft] = useState<
+    Omit<ReportParameter, 'id'>
+  >({
+    name: '',
+    minimum: 0,
+    maximum: 100,
+    step: 1,
+    value: 10,
+  });
+  const [drillthroughDraft, setDrillthroughDraft] = useState({
+    tableId: 'table_sales',
+    field: 'region',
   });
   const [measureDraft, setMeasureDraft] = useState<Omit<SemanticMeasure, 'id'>>(
     {
@@ -364,6 +399,8 @@ export default function Home() {
       name: `Page ${report.pages.length + 1}`,
       hidden: false,
       background: report.theme.canvas,
+      drillthroughFields: [],
+      keepAllFilters: true,
     };
     updateReport((current) => ({
       ...current,
@@ -404,6 +441,11 @@ export default function Home() {
       return;
     }
     const next = report.pages.find((page) => page.id !== activePage.id);
+    const removedWidgetIds = new Set(
+      report.widgets
+        .filter((widget) => widget.pageId === activePage.id)
+        .map((widget) => widget.id),
+    );
     updateReport((current) => ({
       ...current,
       pages: current.pages.filter((page) => page.id !== activePage.id),
@@ -412,6 +454,14 @@ export default function Home() {
       ),
       bookmarks: current.bookmarks.filter(
         (bookmark) => bookmark.pageId !== activePage.id,
+      ),
+      filters: current.filters.filter(
+        (filter) =>
+          filter.pageId !== activePage.id &&
+          !removedWidgetIds.has(filter.widgetId ?? '') &&
+          !Array.from(removedWidgetIds).some((widgetId) =>
+            filter.sourceWidgetId?.startsWith(widgetId),
+          ),
       ),
     }));
     if (next) selectPage(next.id);
@@ -469,6 +519,82 @@ export default function Home() {
     }));
   }
 
+  function addManualFilter() {
+    if (!canEdit) return;
+    if (!filterDraft.field) return showNotice('Choose a field to filter.');
+    if (filterDraft.scope === 'visual' && !selectedWidget) {
+      return showNotice('Select a visual before adding a visual filter.');
+    }
+    const filter: ReportFilter = {
+      id: createId('filter'),
+      ...filterDraft,
+      scope: filterDraft.scope,
+      pageId: filterDraft.scope === 'page' ? activePage?.id : undefined,
+      widgetId: filterDraft.scope === 'visual' ? selectedWidget?.id : undefined,
+    };
+    updateReport((current) => ({
+      ...current,
+      filters: [
+        ...current.filters.filter(
+          (candidate) =>
+            candidate.scope === 'interaction' ||
+            candidate.scope !== filter.scope ||
+            candidate.tableId !== filter.tableId ||
+            candidate.field !== filter.field ||
+            candidate.pageId !== filter.pageId ||
+            candidate.widgetId !== filter.widgetId,
+        ),
+        filter,
+      ],
+    }));
+    showNotice(`${filter.scope} filter applied.`);
+  }
+
+  function addDrillthroughField() {
+    if (!canEdit || !activePage || !drillthroughDraft.field) return;
+    if (
+      activePage.drillthroughFields.some(
+        (item) =>
+          item.tableId === drillthroughDraft.tableId &&
+          item.field === drillthroughDraft.field,
+      )
+    ) {
+      return showNotice('That drillthrough field is already configured.');
+    }
+    updateReport((current) => ({
+      ...current,
+      pages: current.pages.map((page) =>
+        page.id === activePage.id
+          ? {
+              ...page,
+              drillthroughFields: [
+                ...page.drillthroughFields,
+                { id: createId('drillthrough'), ...drillthroughDraft },
+              ],
+            }
+          : page,
+      ),
+    }));
+    showNotice('Drillthrough field added to this page.');
+  }
+
+  function openDrillthrough(page: ReportPage, sourceFilter: ReportFilter) {
+    updateReport((current) => ({
+      ...current,
+      filters: filtersForDrillthrough(
+        current.filters,
+        activePage?.id ?? '',
+        selectedWidgetId,
+        page.id,
+        sourceFilter.id,
+        page.keepAllFilters,
+      ),
+    }));
+    selectPage(page.id);
+    setView('dashboard');
+    showNotice(`Drilled through to ${page.name}.`);
+  }
+
   const materialized = useMemo(() => {
     const map = new Map<string, DataTable['rows']>();
     for (const table of report.tables) {
@@ -481,12 +607,14 @@ export default function Home() {
           calculatedFields: report.calculatedFields,
           transforms: report.transforms,
           querySteps: report.querySteps,
+          parameters: report.parameters,
         }),
       );
     }
     return map;
   }, [
     report.calculatedFields,
+    report.parameters,
     report.relationships,
     report.tables,
     report.transforms,
@@ -512,8 +640,10 @@ export default function Home() {
   const pointsFor = useCallback(
     (widget: ChartWidget) => {
       const rows = materialized.get(widget.tableId) ?? [];
-      const filters = report.filters.filter(
-        (filter) => filter.sourceWidgetId !== widget.id,
+      const filters = filtersForContext(
+        report.filters,
+        widget.pageId,
+        widget.id,
       );
       const filtered = filterRows(
         rows,
@@ -849,7 +979,9 @@ export default function Home() {
     updateReport((current) => ({
       ...current,
       widgets: current.widgets.filter((widget) => widget.id !== id),
-      filters: current.filters.filter((filter) => filter.sourceWidgetId !== id),
+      filters: current.filters.filter(
+        (filter) => filter.sourceWidgetId !== id && filter.widgetId !== id,
+      ),
     }));
     setSelectedWidgetId('');
   }
@@ -878,7 +1010,10 @@ export default function Home() {
             id: createId('filter'),
             tableId,
             field,
+            operator: 'equals',
             value,
+            scope: 'interaction',
+            pageId: widget.pageId,
             sourceWidgetId: widget.id,
           },
         ],
@@ -905,7 +1040,10 @@ export default function Home() {
             id: createId('filter'),
             tableId: widget.tableId,
             field: hierarchy[level] ?? widget.dimension,
+            operator: 'equals',
             value,
+            scope: 'interaction',
+            pageId: widget.pageId,
             sourceWidgetId: `${widget.id}:drill:${level}`,
           },
         ],
@@ -1043,6 +1181,39 @@ export default function Home() {
     }));
     setCalcDraft((current) => ({ ...current, name: '', expression: '' }));
     showNotice('Calculated field added.');
+  }
+
+  function addParameter() {
+    if (!canEdit || !parameterDraft.name.trim()) {
+      return showNotice('Name the what-if parameter.');
+    }
+    if (
+      report.parameters.some(
+        (parameter) =>
+          parameter.name.toLowerCase() ===
+          parameterDraft.name.trim().toLowerCase(),
+      )
+    ) {
+      return showNotice('Parameter names must be unique.');
+    }
+    const minimum = Math.min(parameterDraft.minimum, parameterDraft.maximum);
+    const maximum = Math.max(parameterDraft.minimum, parameterDraft.maximum);
+    const step = Math.max(Number.EPSILON, Math.abs(parameterDraft.step));
+    const parameter: ReportParameter = {
+      id: createId('parameter'),
+      ...parameterDraft,
+      name: parameterDraft.name.trim(),
+      minimum,
+      maximum,
+      step,
+      value: Math.min(maximum, Math.max(minimum, parameterDraft.value)),
+    };
+    updateReport((current) => ({
+      ...current,
+      parameters: [...current.parameters, parameter],
+    }));
+    setParameterDraft((current) => ({ ...current, name: '' }));
+    showNotice(`What-if parameter “${parameter.name}” added.`);
   }
 
   function addSemanticMeasure() {
@@ -1271,6 +1442,19 @@ export default function Home() {
     report.role,
   );
   const activeFields = materializedFields(activeRows);
+  const effectiveProfileField = activeFields.some(
+    (field) => field.name === profileField,
+  )
+    ? profileField
+    : (activeFields[0]?.name ?? '');
+  const activeColumnProfile = effectiveProfileField
+    ? profileColumn(
+        activeRows,
+        effectiveProfileField,
+        activeFields.find((field) => field.name === effectiveProfileField)
+          ?.kind,
+      )
+    : undefined;
   const searchedRows = dataSearch
     ? activeRows.filter((row) =>
         Object.values(row).some((value) =>
@@ -1292,6 +1476,25 @@ export default function Home() {
     (field) => field.kind === 'number',
   );
   const rawActiveFields = inferFields(activeTable?.rows ?? []);
+  const drillthroughActions = report.filters.flatMap((filter) => {
+    const inCurrentContext =
+      filter.scope === 'report' ||
+      (filter.scope === 'page' && filter.pageId === activePage?.id) ||
+      (filter.scope === 'interaction' &&
+        (!filter.pageId || filter.pageId === activePage?.id)) ||
+      (filter.scope === 'visual' && filter.widgetId === selectedWidgetId);
+    if (!inCurrentContext) return [];
+    return report.pages
+      .filter(
+        (page) =>
+          page.id !== activePage?.id &&
+          page.drillthroughFields.some(
+            (item) =>
+              item.tableId === filter.tableId && item.field === filter.field,
+          ),
+      )
+      .map((page) => ({ page, filter }));
+  });
 
   return (
     <main className="bi-shell min-h-screen bg-background text-foreground">
@@ -1602,6 +1805,19 @@ export default function Home() {
                     Performance
                   </Button>
                   <Button
+                    variant={showFilterPane ? 'secondary' : 'outline'}
+                    size="sm"
+                    onClick={() => setShowFilterPane((visible) => !visible)}
+                  >
+                    <Filter />
+                    Filters
+                    {report.filters.length > 0 && (
+                      <span className="toolbar-count">
+                        {report.filters.length}
+                      </span>
+                    )}
+                  </Button>
+                  <Button
                     variant="outline"
                     size="sm"
                     onClick={() => void exportDashboard('png')}
@@ -1653,6 +1869,224 @@ export default function Home() {
                         </article>
                       );
                     })}
+                  </div>
+                </section>
+              )}
+
+              {showFilterPane && (
+                <section className="filter-pane">
+                  <header>
+                    <div>
+                      <strong>Filter context</strong>
+                      <small>
+                        Author report, page, or selected-visual filters. Visual
+                        interactions remain separate and removable below.
+                      </small>
+                    </div>
+                    <button
+                      aria-label="Close filter pane"
+                      onClick={() => setShowFilterPane(false)}
+                    >
+                      <X />
+                    </button>
+                  </header>
+                  <div className="filter-authoring-form">
+                    <label htmlFor="filter-scope">
+                      Scope
+                      <NativeSelect
+                        id="filter-scope"
+                        aria-label="Filter scope"
+                        value={filterDraft.scope}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setFilterDraft((draft) => ({
+                            ...draft,
+                            scope: event.target.value as ReportFilter['scope'],
+                          }))
+                        }
+                      >
+                        <NativeSelectOption value="report">
+                          Entire report
+                        </NativeSelectOption>
+                        <NativeSelectOption value="page">
+                          Current page
+                        </NativeSelectOption>
+                        <NativeSelectOption value="visual">
+                          Selected visual
+                        </NativeSelectOption>
+                      </NativeSelect>
+                    </label>
+                    <label htmlFor="filter-table">
+                      Table
+                      <NativeSelect
+                        id="filter-table"
+                        aria-label="Filter table"
+                        value={filterDraft.tableId}
+                        disabled={!canEdit}
+                        onChange={(event) => {
+                          const tableId = event.target.value;
+                          setFilterDraft((draft) => ({
+                            ...draft,
+                            tableId,
+                            field: fieldsFor(tableId)[0]?.name ?? '',
+                          }));
+                        }}
+                      >
+                        {report.tables.map((table) => (
+                          <NativeSelectOption key={table.id} value={table.id}>
+                            {table.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </label>
+                    <label htmlFor="filter-field">
+                      Field
+                      <NativeSelect
+                        id="filter-field"
+                        aria-label="Filter field"
+                        value={filterDraft.field}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setFilterDraft((draft) => ({
+                            ...draft,
+                            field: event.target.value,
+                          }))
+                        }
+                      >
+                        {fieldsFor(filterDraft.tableId).map((field) => (
+                          <NativeSelectOption
+                            key={field.name}
+                            value={field.name}
+                          >
+                            {field.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </label>
+                    <label htmlFor="filter-operator">
+                      Operator
+                      <NativeSelect
+                        id="filter-operator"
+                        aria-label="Filter operator"
+                        value={filterDraft.operator}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setFilterDraft((draft) => ({
+                            ...draft,
+                            operator: event.target
+                              .value as ReportFilter['operator'],
+                          }))
+                        }
+                      >
+                        {[
+                          'equals',
+                          'not-equals',
+                          'contains',
+                          'greater-than',
+                          'less-than',
+                          'is-blank',
+                          'not-blank',
+                        ].map((operator) => (
+                          <NativeSelectOption key={operator} value={operator}>
+                            {operator.replaceAll('-', ' ')}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </label>
+                    <label htmlFor="filter-value">
+                      Value
+                      <input
+                        id="filter-value"
+                        className="form-input"
+                        aria-label="Filter value"
+                        value={filterDraft.value}
+                        disabled={
+                          !canEdit ||
+                          ['is-blank', 'not-blank'].includes(
+                            filterDraft.operator,
+                          )
+                        }
+                        onChange={(event) =>
+                          setFilterDraft((draft) => ({
+                            ...draft,
+                            value: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                    <Button
+                      size="sm"
+                      onClick={addManualFilter}
+                      disabled={
+                        !canEdit ||
+                        (filterDraft.scope === 'visual' && !selectedWidget)
+                      }
+                    >
+                      <Plus /> Apply filter
+                    </Button>
+                  </div>
+                  {filterDraft.scope === 'page' && activePage && (
+                    <p className="filter-target-copy">
+                      Target page: <strong>{activePage.name}</strong>
+                    </p>
+                  )}
+                  {filterDraft.scope === 'visual' && (
+                    <p className="filter-target-copy">
+                      Target visual:{' '}
+                      <strong>
+                        {selectedWidget?.title ?? 'None selected'}
+                      </strong>
+                    </p>
+                  )}
+                  <div className="filter-context-list">
+                    {report.filters.length ? (
+                      report.filters.map((filter) => (
+                        <article key={filter.id}>
+                          <Badge
+                            variant={
+                              filter.scope === 'interaction'
+                                ? 'secondary'
+                                : 'outline'
+                            }
+                          >
+                            {filter.scope}
+                          </Badge>
+                          <span>
+                            <strong>
+                              {
+                                report.tables.find(
+                                  (table) => table.id === filter.tableId,
+                                )?.name
+                              }
+                              .{filter.field}
+                            </strong>
+                            <small>
+                              {filter.operator.replaceAll('-', ' ')}{' '}
+                              {!['is-blank', 'not-blank'].includes(
+                                filter.operator,
+                              )
+                                ? filter.value
+                                : ''}
+                            </small>
+                          </span>
+                          <button
+                            aria-label={`Remove ${filter.scope} filter`}
+                            onClick={() =>
+                              updateReport((current) => ({
+                                ...current,
+                                filters: current.filters.filter(
+                                  (candidate) => candidate.id !== filter.id,
+                                ),
+                              }))
+                            }
+                          >
+                            <Trash2 />
+                          </button>
+                        </article>
+                      ))
+                    ) : (
+                      <p>No active filter contexts.</p>
+                    )}
                   </div>
                 </section>
               )}
@@ -1748,6 +2182,7 @@ export default function Home() {
                       }
                     >
                       <span>
+                        {filter.scope} ·{' '}
                         {
                           report.tables.find(
                             (table) => table.id === filter.tableId,
@@ -1755,7 +2190,12 @@ export default function Home() {
                         }
                         .{filter.field}
                       </span>
-                      <strong>{filter.value}</strong>
+                      <strong>
+                        {filter.operator.replaceAll('-', ' ')}{' '}
+                        {!['is-blank', 'not-blank'].includes(filter.operator)
+                          ? filter.value
+                          : ''}
+                      </strong>
                       <X />
                     </button>
                   ))}
@@ -1767,6 +2207,23 @@ export default function Home() {
                   >
                     Clear all
                   </button>
+                </div>
+              )}
+
+              {drillthroughActions.length > 0 && (
+                <div className="drillthrough-strip">
+                  <ArrowDownToLine />
+                  <span>Drillthrough</span>
+                  {drillthroughActions.map(({ page, filter }) => (
+                    <Button
+                      key={`${page.id}-${filter.id}`}
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openDrillthrough(page, filter)}
+                    >
+                      {page.name} · {filter.field} = {filter.value}
+                    </Button>
+                  ))}
                 </div>
               )}
 
@@ -2521,6 +2978,155 @@ export default function Home() {
                     })}
                   </div>
                 </section>
+                <section className="profile-panel">
+                  <div className="panel-title profile-heading">
+                    <Activity />
+                    <div>
+                      <strong>Column profile</strong>
+                      <small>
+                        Quality, frequency distribution, and descriptive
+                        statistics across all materialized rows.
+                      </small>
+                    </div>
+                    <NativeSelect
+                      aria-label="Profile column"
+                      value={effectiveProfileField}
+                      onChange={(event) => setProfileField(event.target.value)}
+                    >
+                      {activeFields.map((field) => (
+                        <NativeSelectOption key={field.name} value={field.name}>
+                          {field.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </div>
+                  {activeColumnProfile ? (
+                    <div className="profile-content">
+                      <div className="quality-grid">
+                        <article className="quality-valid">
+                          <span>Valid</span>
+                          <strong>
+                            {activeColumnProfile.validCount.toLocaleString()}
+                          </strong>
+                          <small>
+                            {(activeColumnProfile.validRatio * 100).toFixed(1)}%
+                          </small>
+                        </article>
+                        <article>
+                          <span>Empty</span>
+                          <strong>
+                            {activeColumnProfile.emptyCount.toLocaleString()}
+                          </strong>
+                          <small>blank or null</small>
+                        </article>
+                        <article className="quality-error">
+                          <span>Errors</span>
+                          <strong>
+                            {activeColumnProfile.errorCount.toLocaleString()}
+                          </strong>
+                          <small>invalid {activeColumnProfile.kind}</small>
+                        </article>
+                        <article>
+                          <span>Distinct</span>
+                          <strong>
+                            {activeColumnProfile.distinctCount.toLocaleString()}
+                          </strong>
+                          <small>unique values</small>
+                        </article>
+                      </div>
+                      <div className="profile-details">
+                        <section>
+                          <h3>
+                            {activeColumnProfile.distribution.length
+                              ? 'Numeric distribution'
+                              : 'Most frequent values'}
+                          </h3>
+                          <div className="distribution-list">
+                            {(activeColumnProfile.distribution.length
+                              ? activeColumnProfile.distribution
+                              : activeColumnProfile.topValues
+                            ).map((item) => {
+                              const count = item.count;
+                              const maximum = Math.max(
+                                1,
+                                ...(activeColumnProfile.distribution.length
+                                  ? activeColumnProfile.distribution
+                                  : activeColumnProfile.topValues
+                                ).map((candidate) => candidate.count),
+                              );
+                              return (
+                                <div key={item.label}>
+                                  <span title={item.label}>{item.label}</span>
+                                  <i>
+                                    <b
+                                      style={{
+                                        width: `${(count / maximum) * 100}%`,
+                                      }}
+                                    />
+                                  </i>
+                                  <strong>{count.toLocaleString()}</strong>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </section>
+                        <section>
+                          <h3>Statistics</h3>
+                          <dl className="statistics-grid">
+                            <div>
+                              <dt>Minimum</dt>
+                              <dd>
+                                {formatProfileValue(
+                                  activeColumnProfile.minimum,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Maximum</dt>
+                              <dd>
+                                {formatProfileValue(
+                                  activeColumnProfile.maximum,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Average</dt>
+                              <dd>
+                                {formatProfileValue(
+                                  activeColumnProfile.average,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Median</dt>
+                              <dd>
+                                {formatProfileValue(activeColumnProfile.median)}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Std. deviation</dt>
+                              <dd>
+                                {formatProfileValue(
+                                  activeColumnProfile.standardDeviation,
+                                )}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Rows</dt>
+                              <dd>
+                                {activeColumnProfile.totalCount.toLocaleString()}
+                              </dd>
+                            </div>
+                          </dl>
+                        </section>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="empty-inline">
+                      No fields available to profile.
+                    </p>
+                  )}
+                </section>
                 <section className="table-preview-panel">
                   <div className="panel-title">
                     <Table2 />
@@ -2857,6 +3463,144 @@ export default function Home() {
                         </div>
                       );
                     })}
+                  </div>
+                </section>
+
+                <section className="model-section">
+                  <div className="panel-title">
+                    <Activity />
+                    <div>
+                      <strong>What-if parameters</strong>
+                      <small>
+                        Reference a parameter by name in formulas, for example
+                        [revenue] * (1 + [Uplift] / 100).
+                      </small>
+                    </div>
+                  </div>
+                  <div className="parameter-form">
+                    <input
+                      className="form-input"
+                      aria-label="Parameter name"
+                      placeholder="Parameter name"
+                      value={parameterDraft.name}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        setParameterDraft((draft) => ({
+                          ...draft,
+                          name: event.target.value,
+                        }))
+                      }
+                    />
+                    {(
+                      [
+                        ['minimum', 'Minimum'],
+                        ['maximum', 'Maximum'],
+                        ['step', 'Step'],
+                        ['value', 'Default'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <input
+                        key={key}
+                        className="form-input"
+                        aria-label={`Parameter ${label.toLowerCase()}`}
+                        title={label}
+                        type="number"
+                        value={parameterDraft[key]}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setParameterDraft((draft) => ({
+                            ...draft,
+                            [key]: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    ))}
+                    <Button onClick={addParameter} disabled={!canEdit}>
+                      <Plus /> Add parameter
+                    </Button>
+                  </div>
+                  <div className="parameter-list">
+                    {report.parameters.map((parameter) => (
+                      <article key={parameter.id}>
+                        <header>
+                          <span>
+                            <strong>{parameter.name}</strong>
+                            <small>
+                              {parameter.minimum} to {parameter.maximum} · step{' '}
+                              {parameter.step}
+                            </small>
+                          </span>
+                          <output>{parameter.value}</output>
+                          {canEdit && (
+                            <button
+                              aria-label={`Delete ${parameter.name} parameter`}
+                              onClick={() =>
+                                updateReport((current) => ({
+                                  ...current,
+                                  parameters: current.parameters.filter(
+                                    (candidate) =>
+                                      candidate.id !== parameter.id,
+                                  ),
+                                }))
+                              }
+                            >
+                              <Trash2 />
+                            </button>
+                          )}
+                        </header>
+                        <div className="parameter-control">
+                          <input
+                            type="range"
+                            aria-label={`${parameter.name} slider`}
+                            min={parameter.minimum}
+                            max={parameter.maximum}
+                            step={parameter.step}
+                            value={parameter.value}
+                            disabled={!canEdit}
+                            onChange={(event) => {
+                              const value = Number(event.target.value);
+                              updateReport((current) => ({
+                                ...current,
+                                parameters: current.parameters.map(
+                                  (candidate) =>
+                                    candidate.id === parameter.id
+                                      ? { ...candidate, value }
+                                      : candidate,
+                                ),
+                              }));
+                            }}
+                          />
+                          <input
+                            className="form-input"
+                            type="number"
+                            aria-label={`${parameter.name} value`}
+                            min={parameter.minimum}
+                            max={parameter.maximum}
+                            step={parameter.step}
+                            value={parameter.value}
+                            disabled={!canEdit}
+                            onChange={(event) => {
+                              const value = Math.min(
+                                parameter.maximum,
+                                Math.max(
+                                  parameter.minimum,
+                                  Number(event.target.value),
+                                ),
+                              );
+                              updateReport((current) => ({
+                                ...current,
+                                parameters: current.parameters.map(
+                                  (candidate) =>
+                                    candidate.id === parameter.id
+                                      ? { ...candidate, value }
+                                      : candidate,
+                                ),
+                              }));
+                            }}
+                          />
+                        </div>
+                      </article>
+                    ))}
                   </div>
                 </section>
 
@@ -3647,6 +4391,109 @@ export default function Home() {
                   />
                   Hide page from viewers
                 </label>
+                <div className="drillthrough-config">
+                  <span>Drillthrough fields</span>
+                  <NativeSelect
+                    aria-label="Drillthrough table"
+                    value={drillthroughDraft.tableId}
+                    disabled={!canEdit}
+                    onChange={(event) => {
+                      const tableId = event.target.value;
+                      setDrillthroughDraft({
+                        tableId,
+                        field: fieldsFor(tableId)[0]?.name ?? '',
+                      });
+                    }}
+                  >
+                    {report.tables.map((table) => (
+                      <NativeSelectOption key={table.id} value={table.id}>
+                        {table.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                  <NativeSelect
+                    aria-label="Drillthrough field"
+                    value={drillthroughDraft.field}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      setDrillthroughDraft((draft) => ({
+                        ...draft,
+                        field: event.target.value,
+                      }))
+                    }
+                  >
+                    {fieldsFor(drillthroughDraft.tableId).map((field) => (
+                      <NativeSelectOption key={field.name} value={field.name}>
+                        {field.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={addDrillthroughField}
+                    disabled={!canEdit}
+                  >
+                    <Plus /> Add target field
+                  </Button>
+                  <div className="drillthrough-field-list">
+                    {activePage.drillthroughFields.map((item) => (
+                      <span key={item.id}>
+                        {
+                          report.tables.find(
+                            (table) => table.id === item.tableId,
+                          )?.name
+                        }
+                        .{item.field}
+                        {canEdit && (
+                          <button
+                            aria-label={`Remove ${item.field} drillthrough field`}
+                            onClick={() =>
+                              updateReport((current) => ({
+                                ...current,
+                                pages: current.pages.map((page) =>
+                                  page.id === activePage.id
+                                    ? {
+                                        ...page,
+                                        drillthroughFields:
+                                          page.drillthroughFields.filter(
+                                            (candidate) =>
+                                              candidate.id !== item.id,
+                                          ),
+                                      }
+                                    : page,
+                                ),
+                              }))
+                            }
+                          >
+                            <X />
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                  <label className="page-hidden-toggle">
+                    <input
+                      type="checkbox"
+                      checked={activePage.keepAllFilters}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        updateReport((current) => ({
+                          ...current,
+                          pages: current.pages.map((page) =>
+                            page.id === activePage.id
+                              ? {
+                                  ...page,
+                                  keepAllFilters: event.target.checked,
+                                }
+                              : page,
+                          ),
+                        }))
+                      }
+                    />
+                    Keep all source filters
+                  </label>
+                </div>
               </div>
             )}
             {selectedWidget ? (

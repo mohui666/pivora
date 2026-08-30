@@ -26,6 +26,29 @@ export type AggregatedPoint = {
   value: number;
 };
 
+export type ColumnProfile = {
+  field: string;
+  kind: FieldKind;
+  totalCount: number;
+  validCount: number;
+  emptyCount: number;
+  errorCount: number;
+  distinctCount: number;
+  validRatio: number;
+  minimum?: number;
+  maximum?: number;
+  average?: number;
+  median?: number;
+  standardDeviation?: number;
+  topValues: Array<{ label: string; count: number; ratio: number }>;
+  distribution: Array<{
+    label: string;
+    minimum: number;
+    maximum: number;
+    count: number;
+  }>;
+};
+
 const DATE_PATTERN = /^\d{4}[-/]\d{1,2}[-/]\d{1,2}/;
 
 export function normalizeRows(input: Record<string, unknown>[]): DataRow[] {
@@ -91,6 +114,109 @@ export function inferFields(rows: DataRow[]): Field[] {
       uniqueCount: new Set(values.map(String)).size,
     };
   });
+}
+
+export function profileColumn(
+  rows: DataRow[],
+  field: string,
+  kind?: FieldKind,
+): ColumnProfile {
+  const resolvedKind =
+    kind ??
+    inferFields(rows).find((candidate) => candidate.name === field)?.kind ??
+    'text';
+  const values = rows.map((row) => row[field]);
+  const populated = values.filter(
+    (value): value is string | number =>
+      value !== null && value !== undefined && String(value).trim() !== '',
+  );
+  const isValid = (value: string | number) =>
+    resolvedKind === 'number'
+      ? Number.isFinite(Number(value))
+      : resolvedKind === 'date'
+        ? !Number.isNaN(Date.parse(String(value)))
+        : true;
+  const valid = populated.filter(isValid);
+  const counts = new Map<string, number>();
+  for (const value of valid) {
+    const label = String(value);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const topValues = Array.from(counts, ([label, count]) => ({
+    label,
+    count,
+    ratio: valid.length ? count / valid.length : 0,
+  }))
+    .sort(
+      (left, right) =>
+        right.count - left.count || left.label.localeCompare(right.label),
+    )
+    .slice(0, 8);
+  const numeric =
+    resolvedKind === 'number'
+      ? valid
+          .map(Number)
+          .filter(Number.isFinite)
+          .sort((left, right) => left - right)
+      : [];
+  const minimum = numeric[0];
+  const maximum = numeric.at(-1);
+  const average = numeric.length
+    ? numeric.reduce((sum, value) => sum + value, 0) / numeric.length
+    : undefined;
+  const middle = Math.floor(numeric.length / 2);
+  const median = numeric.length
+    ? numeric.length % 2
+      ? numeric[middle]
+      : (numeric[middle - 1] + numeric[middle]) / 2
+    : undefined;
+  const standardDeviation = numeric.length
+    ? Math.sqrt(
+        numeric.reduce((sum, value) => sum + (value - (average ?? 0)) ** 2, 0) /
+          numeric.length,
+      )
+    : undefined;
+  const distribution: ColumnProfile['distribution'] = [];
+  if (numeric.length && minimum !== undefined && maximum !== undefined) {
+    const binCount = Math.min(
+      8,
+      Math.max(1, Math.ceil(Math.sqrt(numeric.length))),
+    );
+    const width = maximum === minimum ? 1 : (maximum - minimum) / binCount;
+    for (let index = 0; index < binCount; index += 1) {
+      const lower = minimum + width * index;
+      const upper =
+        index === binCount - 1 ? maximum : minimum + width * (index + 1);
+      const count = numeric.filter(
+        (value) =>
+          value >= lower &&
+          (index === binCount - 1 ? value <= upper : value < upper),
+      ).length;
+      distribution.push({
+        label: `${formatMetric(lower)}–${formatMetric(upper)}`,
+        minimum: lower,
+        maximum: upper,
+        count,
+      });
+    }
+  }
+  return {
+    field,
+    kind: resolvedKind,
+    totalCount: rows.length,
+    validCount: valid.length,
+    emptyCount: values.length - populated.length,
+    errorCount: populated.length - valid.length,
+    distinctCount: counts.size,
+    validRatio: rows.length ? valid.length / rows.length : 0,
+    minimum,
+    maximum,
+    average,
+    median,
+    standardDeviation,
+    topValues,
+    distribution,
+  };
 }
 
 function dimensionLabel(value: DataRow[string], kind: FieldKind): string {

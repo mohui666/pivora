@@ -7,6 +7,8 @@ import {
   applyQuerySteps,
   applyTransforms,
   filterRows,
+  filtersForContext,
+  filtersForDrillthrough,
   materializeTable,
   validateCalculatedExpression,
   validateRelationship,
@@ -106,6 +108,34 @@ void test('evaluates bracketed calculated fields and rejects malformed formulas'
   );
 });
 
+void test('resolves numeric what-if parameters inside calculated fields', () => {
+  const result = applyCalculatedFields(
+    sales.rows,
+    sales.id,
+    [
+      {
+        id: 'scenario',
+        tableId: sales.id,
+        name: 'scenario_revenue',
+        expression: '[revenue] * (1 + [Uplift] / 100)',
+      },
+    ],
+    [
+      {
+        id: 'uplift',
+        name: 'Uplift',
+        minimum: 0,
+        maximum: 50,
+        step: 5,
+        value: 25,
+      },
+    ],
+  );
+
+  assert.equal(result[0].scenario_revenue, 150);
+  assert.equal(result[1].scenario_revenue, 100);
+});
+
 void test('materializes lookup fields and applies cross-table filters', () => {
   const rows = materializeTable({
     tableId: sales.id,
@@ -124,7 +154,9 @@ void test('materializes lookup fields and applies cross-table filters', () => {
           id: 'filter',
           tableId: products.id,
           field: 'category',
+          operator: 'equals',
           value: 'Software',
+          scope: 'report',
         },
       ],
       sales.id,
@@ -161,6 +193,98 @@ void test('applies role row rules and lets owners bypass preview filtering', () 
   assert.equal(
     filterRows(rows, [], sales.id, [sales, products], rules, 'owner').length,
     2,
+  );
+});
+
+void test('selects report, page, visual, and interaction filter contexts', () => {
+  const base = {
+    tableId: sales.id,
+    field: 'product_id',
+    operator: 'equals' as const,
+    value: 'p1',
+  };
+  const selected = filtersForContext(
+    [
+      { ...base, id: 'report', scope: 'report' },
+      { ...base, id: 'page', scope: 'page', pageId: 'overview' },
+      { ...base, id: 'other-page', scope: 'page', pageId: 'detail' },
+      { ...base, id: 'visual', scope: 'visual', widgetId: 'chart' },
+      {
+        ...base,
+        id: 'interaction',
+        scope: 'interaction',
+        pageId: 'overview',
+        sourceWidgetId: 'source',
+      },
+      {
+        ...base,
+        id: 'self-interaction',
+        scope: 'interaction',
+        pageId: 'overview',
+        sourceWidgetId: 'chart',
+      },
+    ],
+    'overview',
+    'chart',
+  );
+
+  assert.deepEqual(
+    selected.map((filter) => filter.id),
+    ['report', 'page', 'visual', 'interaction'],
+  );
+});
+
+void test('transfers selected and optional source context into a drillthrough page', () => {
+  const base = {
+    tableId: sales.id,
+    field: 'product_id',
+    operator: 'equals' as const,
+    value: 'p1',
+  };
+  const filters = [
+    { ...base, id: 'report', scope: 'report' as const },
+    {
+      ...base,
+      id: 'source-page',
+      scope: 'page' as const,
+      pageId: 'overview',
+    },
+    {
+      ...base,
+      id: 'selected',
+      scope: 'interaction' as const,
+      pageId: 'overview',
+      sourceWidgetId: 'chart',
+    },
+    {
+      ...base,
+      id: 'old-target',
+      scope: 'page' as const,
+      pageId: 'detail',
+    },
+  ];
+  const transferred = filtersForDrillthrough(
+    filters,
+    'overview',
+    'chart',
+    'detail',
+    'selected',
+    true,
+  );
+
+  assert.deepEqual(
+    transferred
+      .filter((filter) => filter.scope === 'page' && filter.pageId === 'detail')
+      .map((filter) => filter.id),
+    ['drillthrough_source-page_detail', 'drillthrough_selected_detail'],
+  );
+  assert.equal(
+    transferred.some((filter) => filter.id === 'report'),
+    true,
+  );
+  assert.equal(
+    transferred.some((filter) => filter.id === 'old-target'),
+    false,
   );
 });
 

@@ -66,6 +66,8 @@ const overviewPage = {
   name: 'Overview',
   hidden: false,
   background: REPORT_THEMES[0].canvas,
+  drillthroughFields: [],
+  keepAllFilters: true,
 };
 
 const widgets: ChartWidget[] = [
@@ -138,7 +140,7 @@ const widgets: ChartWidget[] = [
 export function createSampleReport(): ReportDocument {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     id: createId('report'),
     name: 'Retail performance',
     createdAt: now,
@@ -167,6 +169,22 @@ export function createSampleReport(): ReportDocument {
         tableId: sales.id,
         name: 'profit',
         expression: '[revenue] - [cost]',
+      },
+      {
+        id: 'calc_scenario_revenue',
+        tableId: sales.id,
+        name: 'scenario_revenue',
+        expression: '[revenue] * (1 + [Scenario uplift] / 100)',
+      },
+    ],
+    parameters: [
+      {
+        id: 'parameter_scenario_uplift',
+        name: 'Scenario uplift',
+        minimum: 0,
+        maximum: 50,
+        step: 1,
+        value: 10,
       },
     ],
     measures: [],

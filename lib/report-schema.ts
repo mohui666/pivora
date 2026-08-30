@@ -2,6 +2,7 @@ import type {
   ChartWidget,
   ReportBookmark,
   ReportDocument,
+  ReportFilter,
   ReportPage,
   RoleRule,
   ReportTheme,
@@ -41,18 +42,38 @@ export const REPORT_THEMES: ReportTheme[] = [
 ];
 
 type LegacyWidget = Omit<ChartWidget, 'pageId'> & { pageId?: string };
+type LegacyPage = Omit<ReportPage, 'drillthroughFields' | 'keepAllFilters'> & {
+  drillthroughFields?: ReportPage['drillthroughFields'];
+  keepAllFilters?: boolean;
+};
+type LegacyFilter = Omit<ReportFilter, 'operator' | 'scope'> & {
+  operator?: ReportFilter['operator'];
+  scope?: ReportFilter['scope'];
+};
+type LegacyBookmark = Omit<ReportBookmark, 'filters'> & {
+  filters: LegacyFilter[];
+};
 type LegacyReport = Omit<
   ReportDocument,
-  'schemaVersion' | 'pages' | 'bookmarks' | 'theme' | 'widgets' | 'roleRules'
+  | 'schemaVersion'
+  | 'pages'
+  | 'bookmarks'
+  | 'theme'
+  | 'widgets'
+  | 'roleRules'
+  | 'filters'
+  | 'parameters'
 > & {
-  schemaVersion: 2 | 3 | 4;
-  pages?: ReportPage[];
-  bookmarks?: ReportBookmark[];
+  schemaVersion: 2 | 3 | 4 | 5;
+  pages?: LegacyPage[];
+  bookmarks?: LegacyBookmark[];
   theme?: ReportTheme;
   widgets: LegacyWidget[];
   querySteps?: ReportDocument['querySteps'];
   measures?: ReportDocument['measures'];
   roleRules?: RoleRule[];
+  filters?: LegacyFilter[];
+  parameters?: ReportDocument['parameters'];
 };
 
 export function upgradeReport(value: unknown): ReportDocument {
@@ -61,7 +82,7 @@ export function upgradeReport(value: unknown): ReportDocument {
   }
   const candidate = value as Record<string, unknown>;
   if (
-    ![2, 3, 4].includes(Number(candidate.schemaVersion)) ||
+    ![2, 3, 4, 5].includes(Number(candidate.schemaVersion)) ||
     !Array.isArray(candidate.tables) ||
     !Array.isArray(candidate.widgets)
   ) {
@@ -69,13 +90,28 @@ export function upgradeReport(value: unknown): ReportDocument {
   }
 
   const legacy = value as LegacyReport;
-  const page: ReportPage = legacy.pages?.[0] ?? {
-    id: 'page_overview',
-    name: 'Overview',
-    hidden: false,
-    background: REPORT_THEMES[0].canvas,
-  };
-  const pages = legacy.pages?.length ? legacy.pages : [page];
+  const firstLegacyPage = legacy.pages?.[0];
+  const page: ReportPage = firstLegacyPage
+    ? {
+        ...firstLegacyPage,
+        drillthroughFields: firstLegacyPage.drillthroughFields ?? [],
+        keepAllFilters: firstLegacyPage.keepAllFilters ?? true,
+      }
+    : {
+        id: 'page_overview',
+        name: 'Overview',
+        hidden: false,
+        background: REPORT_THEMES[0].canvas,
+        drillthroughFields: [],
+        keepAllFilters: true,
+      };
+  const pages: ReportPage[] = legacy.pages?.length
+    ? legacy.pages.map((item) => ({
+        ...item,
+        drillthroughFields: item.drillthroughFields ?? [],
+        keepAllFilters: item.keepAllFilters ?? true,
+      }))
+    : [page];
   const pageIds = new Set(pages.map((item) => item.id));
   const widgets = legacy.widgets.map((widget) => ({
     ...widget,
@@ -91,12 +127,20 @@ export function upgradeReport(value: unknown): ReportDocument {
     conditionalMinColor: widget.conditionalMinColor ?? '#dbeafe',
     conditionalMaxColor: widget.conditionalMaxColor ?? widget.color,
   }));
+  const upgradeFilter = (filter: LegacyFilter): ReportFilter => ({
+    ...filter,
+    operator: filter.operator ?? 'equals',
+    scope: filter.scope ?? (filter.sourceWidgetId ? 'interaction' : 'report'),
+  });
 
   return {
     ...legacy,
-    schemaVersion: 4,
+    schemaVersion: 5,
     pages,
-    bookmarks: legacy.bookmarks ?? [],
+    bookmarks: (legacy.bookmarks ?? []).map((bookmark) => ({
+      ...bookmark,
+      filters: bookmark.filters.map(upgradeFilter),
+    })),
     theme: legacy.theme ?? REPORT_THEMES[0],
     relationships: legacy.relationships.map((relationship) => ({
       ...relationship,
@@ -109,8 +153,10 @@ export function upgradeReport(value: unknown): ReportDocument {
       remove: transform.remove ?? false,
     })),
     querySteps: legacy.querySteps ?? [],
+    parameters: legacy.parameters ?? [],
     measures: legacy.measures ?? [],
     roleRules: legacy.roleRules ?? [],
+    filters: (legacy.filters ?? []).map(upgradeFilter),
     widgets,
   };
 }

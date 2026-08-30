@@ -6,6 +6,7 @@ import {
   applyQuickCalculation,
   inferFields,
   normalizeRows,
+  profileColumn,
   summarize,
 } from './analytics';
 
@@ -80,4 +81,26 @@ void test('supports extended aggregations and quick calculations', () => {
     { label: 'East', value: 1 },
     { label: 'West', value: 2 },
   ]);
+});
+
+void test('profiles column quality, distribution, and descriptive statistics', () => {
+  const profile = profileColumn(
+    [...rows, { date: null, region: '', revenue: 'bad' }],
+    'revenue',
+    'number',
+  );
+
+  assert.equal(profile.totalCount, 4);
+  assert.equal(profile.validCount, 3);
+  assert.equal(profile.errorCount, 1);
+  assert.equal(profile.emptyCount, 0);
+  assert.equal(profile.distinctCount, 3);
+  assert.equal(profile.minimum, 500);
+  assert.equal(profile.maximum, 1200);
+  assert.equal(profile.average, 2500 / 3);
+  assert.equal(profile.median, 800);
+  assert.equal(
+    profile.distribution.reduce((sum, bin) => sum + bin.count, 0),
+    3,
+  );
 });

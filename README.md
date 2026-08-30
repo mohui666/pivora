@@ -30,20 +30,20 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 
 ## Highlights
 
-|     | Capability               | What it gives you                                                                                   |
-| --- | ------------------------ | --------------------------------------------------------------------------------------------------- |
-| 📥  | **Multi-format import**  | CSV, JSON, XML, Parquet, Excel, SQLite, folders, and explicit Web/API GET                           |
-| 🧹  | **Data preparation**     | 10 ordered query operations, type cleaning, custom columns, grouping, search, and previews          |
-| 🧩  | **Semantic modeling**    | Four cardinalities, relationship health diagnostics, formulas, measures, and quick calculations     |
-| 📊  | **Visual authoring**     | 14 visuals, hierarchies, drill controls, conditional scales, secondary measures, sorting, and Top N |
-| ✨  | **Report authoring**     | Multi-page canvas, drag/resize, themes, bookmarks, hidden pages/visuals, undo, and redo             |
-| 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                      |
-| 🧠  | **Local SQL workbench**  | Read-only DuckDB-WASM queries over materialized report tables, with history and reusable results    |
-| 📦  | **Portable output**      | Import/export `.pivora` (plus legacy `.llbi`), active-page PNG, and multi-page PDF                  |
-| ⏱️  | **Performance analyzer** | Measure local aggregation time, input rows, and output points for every visual on a page            |
-| 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals                         |
-| 👥  | **Role-aware preview**   | Owner, Editor, Viewer, and field/operator row rules that also constrain local SQL                   |
-| 🌗  | **Refined UI**           | Responsive layout, dark mode, accessible controls, and a ready-to-use sample report                 |
+|     | Capability               | What it gives you                                                                                    |
+| --- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| 📥  | **Multi-format import**  | CSV, JSON, XML, Parquet, Excel, SQLite, folders, and explicit Web/API GET                            |
+| 🧹  | **Data preparation**     | 10 ordered query operations, cleaning, column quality, distributions, statistics, and row previews   |
+| 🧩  | **Semantic modeling**    | Four cardinalities, diagnostics, formulas, measures, quick calculations, and live what-if parameters |
+| 📊  | **Visual authoring**     | 14 visuals, hierarchies, drillthrough, conditional scales, secondary measures, sorting, and Top N    |
+| ✨  | **Report authoring**     | Multi-page canvas, scoped filters, drag/resize, themes, bookmarks, hidden content, undo, and redo    |
+| 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                       |
+| 🧠  | **Local SQL workbench**  | Read-only DuckDB-WASM queries over materialized report tables, with history and reusable results     |
+| 📦  | **Portable output**      | Import/export `.pivora` (plus legacy `.llbi`), active-page PNG, and multi-page PDF                   |
+| ⏱️  | **Performance analyzer** | Measure local aggregation time, input rows, and output points for every visual on a page             |
+| 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals                          |
+| 👥  | **Role-aware preview**   | Owner, Editor, Viewer, and field/operator row rules that also constrain local SQL                    |
+| 🌗  | **Refined UI**           | Responsive layout, dark mode, accessible controls, and a ready-to-use sample report                  |
 
 ## See the workflow
 
@@ -53,7 +53,7 @@ flowchart LR
     B --> C[Clean and model]
     C --> D[Query steps and formulas]
     D --> E[Multi-page report]
-    E --> F[Cross-filter]
+    E --> F[Scoped filter and drillthrough]
     E --> G[PNG / PDF]
     E --> H[Portable .pivora bundle]
     H --> I[Share without a server]
@@ -96,10 +96,10 @@ No Sites binding, hosted service, or external database is required.
 ## Build your first report
 
 1. Select **Import** and choose one or more supported local files.
-2. Open **Data & clean** to build an ordered filter/sort/deduplicate/limit/index pipeline and clean columns non-destructively.
-3. Open **Model** to define cardinality, cross-filter direction, active relationships, or formulas such as `[revenue] - [cost]`.
-4. Return to **Dashboard**, create pages, add visuals, and configure aggregations or quick calculations in the inspector.
-5. Click a chart value to cross-filter related visuals; capture the result as a bookmark when useful.
+2. Open **Data & clean** to build an ordered preparation pipeline, clean columns non-destructively, and inspect quality, frequency, and numeric distribution for every field.
+3. Open **Model** to define relationships, formulas such as `[revenue] - [cost]`, reusable measures, row rules, and what-if parameters.
+4. Return to **Dashboard**, create pages, add visuals, and configure aggregations, quick calculations, filter scopes, and page drillthrough fields.
+5. Click a chart value to cross-filter related visuals or transfer its context into a configured drillthrough page; capture useful states as bookmarks.
 6. Apply a report theme, undo/redo edits, save locally, export a portable `.pivora` bundle, or render the active page to PNG/PDF.
 
 ## Data model
@@ -110,11 +110,14 @@ Pivora uses a deliberately compact semantic layer:
 - **Query steps** form an ordered non-destructive pipeline: filter, sort, remove duplicates, keep first rows, add index, replace, rename, split, create custom columns, and group/aggregate.
 - **Transforms** override types, trim strings, fill blanks, or exclude columns during materialization.
 - **Relationships** support one-to-one, one-to-many, many-to-one, and many-to-many cardinalities, active state, and single/bidirectional filtering.
-- **Calculated fields** use bracketed column references and a safe expression evaluator.
+- **Calculated fields** use bracketed column and parameter references through a safe expression evaluator.
+- **What-if parameters** provide bounded numeric values and live sliders; formulas can reference them by name, such as `[revenue] * (1 + [Scenario uplift] / 100)`.
 - **Reusable measures** centralize field aggregation, number format, and calculation behavior for use across visuals.
 - **Aggregations** include sum, average, count, distinct count, minimum, and maximum, followed by optional running total, percent-of-total, previous-period difference, percent change, or ranking.
-- **Filters** can flow from a visual to fields exposed through related tables.
-- **Pages, bookmarks, and themes** capture presentation state without changing source data.
+- **Filters** support report, page, selected-visual, and interaction scopes with seven operators.
+- **Drillthrough pages** declare one or more target fields and can transfer the selected value alone or preserve the full source context.
+- **Column profiles** calculate valid, empty, error, and distinct counts alongside top values, histograms, min/max, mean, median, and standard deviation.
+- **Pages, bookmarks, and themes** capture presentation and filter state without changing source data.
 - **Widgets** store query configuration, visibility, formatting, interactions, and responsive grid layout.
 
 Example calculated fields:
@@ -123,6 +126,7 @@ Example calculated fields:
 [revenue] - [cost]
 [units] * [unit_price]
 ([revenue] - [cost]) / [revenue] * 100
+[revenue] * (1 + [Scenario uplift] / 100)
 ```
 
 ## Architecture
@@ -143,10 +147,12 @@ Browser
 │   ├── relationships
 │   ├── calculated fields
 │   ├── reusable measures
+│   ├── what-if parameters
 │   ├── quick calculations
 │   ├── relationship diagnostics
 │   ├── role row rules
-│   └── cross-filters
+│   ├── scoped filter contexts
+│   └── drillthrough transfer
 ├── DuckDB-WASM workbench
 │   ├── read-only SQL worker
 │   ├── query history
@@ -154,7 +160,8 @@ Browser
 ├── React analytics studio
 │   ├── responsive grid canvas
 │   ├── 14 Recharts/CSS visuals
-│   ├── pages, bookmarks, and themes
+│   ├── pages, bookmarks, themes, and drillthrough
+│   ├── column quality and distribution profiler
 │   └── visual inspector
 └── Local persistence
     ├── IndexedDB report library
@@ -196,7 +203,7 @@ For datasets that exceed the browser's practical memory budget, reduce the sourc
 ## Quality gates
 
 ```bash
-npm test       # inference, aggregation, formulas, joins, diagnostics, roles, and import adapters
+npm test       # 24 focused checks for profiling, formulas, filters, joins, roles, schema, and imports
 npm run lint   # type-aware lint and React checks
 npm run build  # production build
 ```
@@ -229,6 +236,10 @@ These constraints keep the project private-by-default, understandable, and easy 
 - [x] Add local DuckDB-WASM SQL, reusable query results, and production-safe split assets
 - [x] Add opt-in Web/API JSON, CSV, and XML connector
 - [x] Add local row-level role rules and filtered SQL previews
+- [x] Add report/page/visual filter scopes with operator-aware authoring
+- [x] Add live numeric what-if parameters for calculated-field formulas
+- [x] Add configured drillthrough pages with optional full-context transfer
+- [x] Add column quality, top-value, histogram, and descriptive-statistics profiling
 - [ ] Add ODBC-style bridge and data-lake connectors
 - [ ] Add repeatable end-to-end browser tests for import, authoring, and export flows
 - [ ] Add internationalization
