@@ -4,18 +4,21 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - "app/**"
-      - "components/**"
-      - "desktop/**"
-      - "lib/**"
-      - "scripts/**"
-      - "package.json"
-      - "package-lock.json"
-      - "electron-builder.yml"
-      - ".github/workflows/desktop.yml"
+      - 'app/**'
+      - 'components/**'
+      - 'desktop/**'
+      - 'e2e/**'
+      - 'hooks/**'
+      - 'lib/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'playwright.config.ts'
+      - 'electron-builder.yml'
+      - '.github/workflows/desktop.yml'
   push:
     tags:
-      - "v*"
+      - 'v*'
 
 permissions:
   contents: read
@@ -25,7 +28,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -44,6 +47,12 @@ jobs:
           npm test
           npm run lint
           npx tsc --noEmit
+
+      - name: Install browser test runtime
+        run: npx playwright install --with-deps chromium --only-shell
+
+      - name: Run browser workflows
+        run: npm run test:e2e
 
       - name: Build Windows desktop artifacts
         run: npm run desktop:dist

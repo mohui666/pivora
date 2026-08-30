@@ -38,6 +38,15 @@ const PIE_COLORS = [
 
 const subscribeToHydration = () => () => {};
 
+const ZH_AGGREGATIONS: Record<ChartWidget['aggregation'], string> = {
+  sum: '求和',
+  average: '平均值',
+  count: '计数',
+  minimum: '最小值',
+  maximum: '最大值',
+  'distinct-count': '非重复计数',
+};
+
 function mixHex(low: string, high: string, ratio: number): string {
   const parse = (color: string) => {
     const hex = color.replace('#', '').padEnd(6, '0');
@@ -56,9 +65,13 @@ function mixHex(low: string, high: string, ratio: number): string {
     .join('')}`;
 }
 
-export function formatVisualValue(value: number, format: NumberFormat): string {
+export function formatVisualValue(
+  value: number,
+  format: NumberFormat,
+  locale = 'en-US',
+): string {
   if (format === 'currency') {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: 'USD',
       notation: Math.abs(value) >= 100_000 ? 'compact' : 'standard',
@@ -66,12 +79,12 @@ export function formatVisualValue(value: number, format: NumberFormat): string {
     }).format(value);
   }
   if (format === 'percent') {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat(locale, {
       style: 'percent',
       maximumFractionDigits: 1,
     }).format(value);
   }
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat(locale, {
     notation: format === 'compact' ? 'compact' : 'standard',
     maximumFractionDigits: 2,
   }).format(value);
@@ -84,6 +97,7 @@ export function ChartVisual({
   onPointClick,
   dimensionLabel,
   measureLabel,
+  locale = 'en-US',
 }: {
   widget: ChartWidget;
   points: AggregatedPoint[];
@@ -91,6 +105,7 @@ export function ChartVisual({
   onPointClick?: (label: string) => void;
   dimensionLabel?: string;
   measureLabel?: string;
+  locale?: string;
 }) {
   const hydrated = useSyncExternalStore(
     subscribeToHydration,
@@ -132,10 +147,12 @@ export function ChartVisual({
           className="text-[clamp(1.9rem,4vw,3.4rem)] font-semibold tracking-[-0.04em]"
           style={{ color: widget.color }}
         >
-          {formatVisualValue(total, widget.numberFormat)}
+          {formatVisualValue(total, widget.numberFormat, locale)}
         </strong>
         <p className="mt-1 text-xs text-muted-foreground">
-          {widget.aggregation} of {measureLabel ?? widget.measure}
+          {locale === 'zh-CN'
+            ? `${measureLabel ?? widget.measure} · ${ZH_AGGREGATIONS[widget.aggregation]}`
+            : `${widget.aggregation} of ${measureLabel ?? widget.measure}`}
         </p>
       </div>
     );
@@ -152,11 +169,20 @@ export function ChartVisual({
           }}
         >
           <div>
-            <strong>{formatVisualValue(total, widget.numberFormat)}</strong>
-            <small>{Math.round(ratio * 100)}% of target</small>
+            <strong>
+              {formatVisualValue(total, widget.numberFormat, locale)}
+            </strong>
+            <small>
+              {locale === 'zh-CN'
+                ? `目标达成率 ${Math.round(ratio * 100)}%`
+                : `${Math.round(ratio * 100)}% of target`}
+            </small>
           </div>
         </div>
-        <p>Target {formatVisualValue(target, widget.numberFormat)}</p>
+        <p>
+          {locale === 'zh-CN' ? '目标' : 'Target'}{' '}
+          {formatVisualValue(target, widget.numberFormat, locale)}
+        </p>
       </div>
     );
   }
@@ -167,7 +193,7 @@ export function ChartVisual({
           <button key={point.label} onClick={() => onPointClick?.(point.label)}>
             <span>{point.label}</span>
             <strong>
-              {formatVisualValue(point.value, widget.numberFormat)}
+              {formatVisualValue(point.value, widget.numberFormat, locale)}
             </strong>
           </button>
         ))}
@@ -194,7 +220,7 @@ export function ChartVisual({
               }}
             />
             <strong>
-              {formatVisualValue(point.value, widget.numberFormat)}
+              {formatVisualValue(point.value, widget.numberFormat, locale)}
             </strong>
           </button>
         ))}
@@ -223,7 +249,7 @@ export function ChartVisual({
                       : undefined
                   }
                 >
-                  {formatVisualValue(point.value, widget.numberFormat)}
+                  {formatVisualValue(point.value, widget.numberFormat, locale)}
                 </td>
                 {widget.kind === 'matrix' && (
                   <td>
@@ -249,7 +275,7 @@ export function ChartVisual({
       }}
       cursor={{ fill: 'var(--muted)' }}
       formatter={(value) => [
-        formatVisualValue(Number(value), widget.numberFormat),
+        formatVisualValue(Number(value), widget.numberFormat, locale),
         measureLabel ?? widget.measure,
       ]}
     />
@@ -276,7 +302,7 @@ export function ChartVisual({
         width={56}
         tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }}
         tickFormatter={(value) =>
-          formatVisualValue(Number(value), widget.numberFormat)
+          formatVisualValue(Number(value), widget.numberFormat, locale)
         }
       />
     </>

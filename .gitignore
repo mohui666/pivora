@@ -38,3 +38,5 @@ next-env.d.ts
 /work/
 /release/
 /desktop/runtime/node_modules/
+/playwright-report/
+/test-results/

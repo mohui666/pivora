@@ -247,6 +247,20 @@
 .header-report-name:focus {
   background: var(--muted);
 }
+.header-language {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--muted-foreground);
+}
+.header-language > svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: 0 0 auto;
+}
+.header-language select {
+  width: 7.25rem;
+}
 .bi-workspace {
   display: grid;
   grid-template-columns: 14.5rem minmax(0, 1fr);
@@ -2469,6 +2483,9 @@
   }
   .header-report-name {
     width: 9rem;
+  }
+  .header-language > svg {
+    display: none;
   }
   .bi-workspace,
   .bi-workspace.with-inspector {

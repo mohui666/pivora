@@ -42,8 +42,10 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 | 🛟  | **Workspace recovery**   | Reopen the last active report and restore from up to 30 compressed manual/automatic local checkpoints       |
 | 🧱  | **Report templates**     | Start blank or use guided retail, executive, and live scenario-planning report structures                   |
 | 🖥️  | **Windows desktop**      | Signed-ready installer and portable app with an embedded private localhost runtime                          |
+| 🌐  | **English & 简体中文**   | Persistent in-app language switching across authoring, modeling, SQL, recovery, and desktop diagnostics     |
 | 🧠  | **Local SQL workbench**  | Read-only DuckDB-WASM queries over materialized report tables, with history and reusable results            |
 | 📦  | **Portable output**      | Import/export `.pivora` (plus legacy `.llbi`), active-page PNG, and multi-page PDF                          |
+| ⚡  | **On-demand engines**    | Charting, import adapters, DuckDB, PNG, Excel, and PDF code load only when the workflow needs them          |
 | ⏱️  | **Performance analyzer** | Measure local aggregation time, input rows, and output points for every visual on a page                    |
 | 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals                                 |
 | 👥  | **Role-aware preview**   | Owner, Editor, Viewer, and field/operator row rules that also constrain local SQL                           |
@@ -87,6 +89,8 @@ npm run dev
 ```
 
 Open the local URL printed by the development server.
+
+Use the language selector in the top toolbar to switch between **English** and **简体中文**. The choice is saved locally and restored the next time Pivora opens.
 
 ### Local production build
 
@@ -229,20 +233,22 @@ Pivora is built around a small trust boundary:
 
 ## Performance boundaries
 
-Pivora currently caps each imported table at **250,000 rows**. Previews render 100 rows per page, charts aggregate only the materialized fields they need, and the optional DuckDB-WASM engine executes SQL in a Web Worker.
+Pivora currently caps each imported table at **250,000 rows**. Previews render 100 rows per page, charts aggregate only the materialized fields they need, and the optional DuckDB-WASM engine executes SQL in a Web Worker. Chart rendering, data-import adapters, DuckDB, PNG capture, Excel, and PDF exporters are split from the initial application bundle and fetched only when their workflows are opened.
 
 For datasets that exceed the browser's practical memory budget, reduce the source file or query it into a smaller SQLite table before import.
 
 ## Quality gates
 
 ```bash
-npm test          # 36 focused checks for analytics, imports, schema, recovery, and layout modes
+npm test          # 41 focused checks for analytics, imports, schema, i18n, recovery, and layout modes
 npm run lint      # type-aware lint, React checks, and desktop-process checks
-npm run build     # production web build
+npx tsc --noEmit --incremental false # independent TypeScript check
+npm run build     # production web build and split-asset validation
+npm run test:e2e  # production-server Chromium workflows
 npm run desktop:smoke # packaged Windows startup and shutdown probe
 ```
 
-The current suite covers the core analytics and import paths with Node's native test runner.
+The Node suite covers analytics, imports, schema behavior, localization, recovery, and layout logic. Playwright then builds and starts the production application and exercises language persistence plus a complete CSV import, table switch, visual creation, freeform drag/resize, `.pivora` bundle export, and PNG export workflow in Chromium. The E2E checks also ensure heavy SQL and export engines stay out of the initial page load.
 
 ## Current scope
 
@@ -264,7 +270,7 @@ These constraints keep the project private-by-default, understandable, and easy 
 - [x] Matrix, scatter, funnel, waterfall, treemap, gauge, combo, and slicer visuals
 - [x] Ordered query steps and extended/quick calculations
 - [x] Parquet, folder import, reusable measures, drill hierarchies, conditional scales, and performance analysis
-- [ ] Lazy-load heavy import/export adapters for a smaller initial bundle
+- [x] Lazy-load heavy import/export adapters for a smaller initial bundle
 - [x] Add relationship cardinality diagnostics
 - [x] Add drill hierarchies, conditional formatting, and multi-page PDF export
 - [x] Add local DuckDB-WASM SQL, reusable query results, and production-safe split assets
@@ -282,8 +288,8 @@ These constraints keep the project private-by-default, understandable, and easy 
 - [x] Add stable table resizing, explicit table switching, and auto-snap/freeform canvas modes
 - [x] Add local Windows installer/portable builds with sandboxing, startup diagnostics, and packaged smoke tests
 - [ ] Add ODBC-style bridge and data-lake connectors
-- [ ] Add repeatable end-to-end browser tests for import, authoring, and export flows
-- [ ] Add internationalization
+- [x] Add repeatable end-to-end browser tests for import, authoring, and export flows
+- [x] Add persistent English and Simplified Chinese internationalization
 
 ## Contributing
 

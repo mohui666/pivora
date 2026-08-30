@@ -127,8 +127,8 @@
   <body>
     <main>
       <div class="mark">P</div>
-      <h1>The local engine did not start</h1>
-      <p>
+      <h1 id="heading">The local engine did not start</h1>
+      <p id="description">
         Pivora kept your reports untouched. Retry the private local runtime, or
         use the log path below when reporting the problem.
       </p>
@@ -142,18 +142,45 @@
       const details = document.querySelector('#details');
       const retry = document.querySelector('#retry');
       const status = document.querySelector('#status');
+      const heading = document.querySelector('#heading');
+      const description = document.querySelector('#description');
+      const chinese = navigator.language.toLowerCase().startsWith('zh');
+      const messages = chinese
+        ? {
+            heading: '本地引擎未能启动',
+            description:
+              'Pivora 未改动你的报表。你可以重试私有本地运行时，或在反馈问题时附上下方日志路径。',
+            retry: '重试本地引擎',
+            starting: '正在启动…',
+            unavailable: '仍然不可用',
+            log: '日志',
+          }
+        : {
+            heading: 'The local engine did not start',
+            description:
+              'Pivora kept your reports untouched. Retry the private local runtime, or use the log path below when reporting the problem.',
+            retry: 'Retry local engine',
+            starting: 'Starting…',
+            unavailable: 'Still unavailable',
+            log: 'Log',
+          };
+
+      document.documentElement.lang = chinese ? 'zh-CN' : 'en';
+      heading.textContent = messages.heading;
+      description.textContent = messages.description;
+      retry.textContent = messages.retry;
 
       async function refreshStatus() {
         const value = await window.pivoraDesktop.runtimeStatus();
-        details.textContent = `${value.message}\nLog: ${value.logPath}`;
+        details.textContent = `${value.message}\n${messages.log}: ${value.logPath}`;
       }
 
       retry.addEventListener('click', async () => {
         retry.disabled = true;
-        status.textContent = 'Starting…';
+        status.textContent = messages.starting;
         const result = await window.pivoraDesktop.retryRuntime();
         if (!result.ok) {
-          status.textContent = 'Still unavailable';
+          status.textContent = messages.unavailable;
           await refreshStatus();
           retry.disabled = false;
         }

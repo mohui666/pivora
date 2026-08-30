@@ -1,6 +1,5 @@
 'use client';
 
-import { toPng } from 'html-to-image';
 import {
   ArrowUpFromLine,
   ArrowDownToLine,
@@ -43,6 +42,8 @@ import {
 } from 'lucide-react';
 import {
   type CSSProperties,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -57,7 +58,6 @@ import ReactGridLayout, {
 } from 'react-grid-layout';
 import { minMaxSize, type LayoutConstraint } from 'react-grid-layout/core';
 
-import { ChartVisual } from '@/components/bi/chart-visual';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -106,15 +106,15 @@ import type {
   RoleRule,
   SemanticMeasure,
 } from '@/lib/bi-types';
-import { parseDataFile } from '@/lib/data-import';
 import {
   convertWidgetLayoutMode,
   DASHBOARD_GRID_MODES,
   normalizeWidgetLayoutForMode,
   resolveDashboardGridGeometry,
 } from '@/lib/grid-layout';
+import { translateBuiltinLabel, UI_LOCALES, type UiLocale } from '@/lib/i18n';
 import { REPORT_THEMES, upgradeReport } from '@/lib/report-schema';
-import { REPORT_TEMPLATES } from '@/lib/report-templates';
+import { createBlankReport, REPORT_TEMPLATES } from '@/lib/report-templates';
 import {
   createReportSnapshot,
   deleteReport,
@@ -128,6 +128,7 @@ import {
 } from '@/lib/report-storage';
 import { createSampleReport } from '@/lib/sample-report';
 import type { LocalSqlResult } from '@/lib/duckdb-engine';
+import { useUiLocale } from '@/hooks/use-ui-locale';
 
 type View = 'dashboard' | 'data' | 'model' | 'sql';
 type LocalFileHandle = { name: string; getFile: () => Promise<File> };
@@ -153,6 +154,16 @@ const FREEFORM_ORIGIN_CONSTRAINT: LayoutConstraint = {
 const FREEFORM_CONSTRAINTS = [FREEFORM_ORIGIN_CONSTRAINT, minMaxSize];
 
 const AUTO_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
+
+const ChartVisual = lazy(async () => {
+  const chartModule = await import('@/components/bi/chart-visual');
+  return { default: chartModule.ChartVisual };
+});
+
+async function parseLocalDataFile(file: File) {
+  const { parseDataFile } = await import('@/lib/data-import');
+  return parseDataFile(file);
+}
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
@@ -251,9 +262,12 @@ type ReportHistory = {
 };
 
 export default function Home() {
+  const uiRootRef = useRef<HTMLElement>(null);
+  const { locale, setLocale } = useUiLocale(uiRootRef);
+  const numberLocale = locale === 'zh-CN' ? 'zh-CN' : 'en-US';
   const [history, setHistory] = useState<ReportHistory>(() => ({
     past: [],
-    present: createSampleReport(),
+    present: createBlankReport(),
     future: [],
   }));
   const report = history.present;
@@ -939,6 +953,7 @@ export default function Home() {
       })
       .catch(() => {
         if (cancelled) return;
+        activateReport(createSampleReport());
         lastAutoSnapshotAt.current = Date.now();
         setStorageReady(true);
         setNotice(
@@ -1006,7 +1021,8 @@ export default function Home() {
     setImporting(true);
     try {
       const imported: DataTable[] = [];
-      for (const file of files) imported.push(...(await parseDataFile(file)));
+      for (const file of files)
+        imported.push(...(await parseLocalDataFile(file)));
       for (const handle of handles)
         fileHandles.current.set(handle.name, handle);
       updateReport((current) => {
@@ -1103,7 +1119,7 @@ export default function Home() {
       const fileName = `${webTableName.trim() || pathName?.replace(/\.[^.]+$/, '') || 'web-data'}.${extension}`;
       const file = new File([body], fileName, { type: contentType });
       const sourceLabel = `${parsedUrl.origin}${parsedUrl.pathname}`;
-      const parsedTables = await parseDataFile(file);
+      const parsedTables = await parseLocalDataFile(file);
       const imported = parsedTables.map((table) => ({
         ...table,
         name:
@@ -1736,6 +1752,7 @@ export default function Home() {
   async function exportDashboard(kind: 'png' | 'pdf') {
     if (!dashboardRef.current) return;
     showNotice(`Preparing ${kind.toUpperCase()}…`);
+    const { toPng } = await import('html-to-image');
     const dataUrl = await toPng(dashboardRef.current, {
       cacheBust: true,
       pixelRatio: 2,
@@ -1768,6 +1785,7 @@ export default function Home() {
     showNotice(`Rendering ${pages.length} report pages…`);
     const captures: { dataUrl: string; width: number; height: number }[] = [];
     try {
+      const { toPng } = await import('html-to-image');
       for (const page of pages) {
         setActivePageId(page.id);
         await new Promise<void>((resolve) =>
@@ -1954,7 +1972,10 @@ export default function Home() {
   });
 
   return (
-    <main className="bi-shell min-h-screen bg-background text-foreground">
+    <main
+      ref={uiRootRef}
+      className="bi-shell min-h-screen bg-background text-foreground"
+    >
       <input
         ref={dataInput}
         type="file"
@@ -2013,6 +2034,21 @@ export default function Home() {
           />
         </div>
         <div className="flex items-center gap-1.5">
+          <div className="header-language">
+            <Globe2 aria-hidden="true" />
+            <NativeSelect
+              size="sm"
+              value={locale}
+              aria-label="Interface language"
+              onChange={(event) => setLocale(event.target.value as UiLocale)}
+            >
+              {UI_LOCALES.map((candidate) => (
+                <NativeSelectOption key={candidate.id} value={candidate.id}>
+                  {candidate.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
           <NativeSelect
             size="sm"
             value={report.role}
@@ -2038,7 +2074,7 @@ export default function Home() {
           >
             {REPORT_THEMES.map((theme) => (
               <NativeSelectOption key={theme.id} value={theme.id}>
-                {theme.name}
+                {translateBuiltinLabel(locale, theme.name)}
               </NativeSelectOption>
             ))}
           </NativeSelect>
@@ -2871,40 +2907,47 @@ export default function Home() {
                             )}
                           </header>
                           <div className="visual-body">
-                            <ChartVisual
-                              widget={{
-                                ...widget,
-                                dimension: effectiveDimension(widget),
-                              }}
-                              points={pointsFor(widget)}
-                              secondaryPoints={
-                                widget.secondaryMeasure
-                                  ? pointsFor({
-                                      ...widget,
-                                      measure: widget.secondaryMeasure,
-                                    })
-                                  : undefined
+                            <Suspense
+                              fallback={
+                                <div className="h-full min-h-0 w-full animate-pulse rounded-lg bg-muted" />
                               }
-                              dimensionLabel={
-                                metadataFor(
-                                  widget.tableId,
-                                  effectiveDimension(widget),
-                                )?.displayName || effectiveDimension(widget)
-                              }
-                              measureLabel={
-                                report.measures.find(
-                                  (measure) => measure.id === widget.measure,
-                                )?.name ||
-                                metadataFor(widget.tableId, widget.measure)
-                                  ?.displayName ||
-                                (widget.measure === '__rows'
-                                  ? 'Row count'
-                                  : widget.measure)
-                              }
-                              onPointClick={(value) =>
-                                applyVisualPoint(widget, value)
-                              }
-                            />
+                            >
+                              <ChartVisual
+                                locale={numberLocale}
+                                widget={{
+                                  ...widget,
+                                  dimension: effectiveDimension(widget),
+                                }}
+                                points={pointsFor(widget)}
+                                secondaryPoints={
+                                  widget.secondaryMeasure
+                                    ? pointsFor({
+                                        ...widget,
+                                        measure: widget.secondaryMeasure,
+                                      })
+                                    : undefined
+                                }
+                                dimensionLabel={
+                                  metadataFor(
+                                    widget.tableId,
+                                    effectiveDimension(widget),
+                                  )?.displayName || effectiveDimension(widget)
+                                }
+                                measureLabel={
+                                  report.measures.find(
+                                    (measure) => measure.id === widget.measure,
+                                  )?.name ||
+                                  metadataFor(widget.tableId, widget.measure)
+                                    ?.displayName ||
+                                  (widget.measure === '__rows'
+                                    ? 'Row count'
+                                    : widget.measure)
+                                }
+                                onPointClick={(value) =>
+                                  applyVisualPoint(widget, value)
+                                }
+                              />
+                            </Suspense>
                           </div>
                         </article>
                       ))}
@@ -4402,7 +4445,10 @@ export default function Home() {
                           'image-url',
                         ].map((category) => (
                           <NativeSelectOption key={category} value={category}>
-                            {category.replaceAll('-', ' ')}
+                            {translateBuiltinLabel(
+                              locale,
+                              category.replaceAll('-', ' '),
+                            )}
                           </NativeSelectOption>
                         ))}
                       </NativeSelect>
@@ -5658,7 +5704,7 @@ export default function Home() {
                       'slicer',
                     ].map((kind) => (
                       <NativeSelectOption key={kind} value={kind}>
-                        {kind}
+                        {translateBuiltinLabel(locale, kind)}
                       </NativeSelectOption>
                     ))}
                   </NativeSelect>
@@ -6381,12 +6427,18 @@ export default function Home() {
                     <i />
                     <i />
                   </span>
-                  <small>{template.eyebrow}</small>
-                  <strong>{template.name}</strong>
-                  <p>{template.description}</p>
+                  <small>
+                    {translateBuiltinLabel(locale, template.eyebrow)}
+                  </small>
+                  <strong>
+                    {translateBuiltinLabel(locale, template.name)}
+                  </strong>
+                  <p>{translateBuiltinLabel(locale, template.description)}</p>
                   <span className="template-features">
                     {template.features.map((feature) => (
-                      <em key={feature}>{feature}</em>
+                      <em key={feature}>
+                        {translateBuiltinLabel(locale, feature)}
+                      </em>
                     ))}
                   </span>
                   <b>
