@@ -9,6 +9,8 @@ import {
   MIN_WIDGET_HEIGHT,
   MIN_WIDGET_WIDTH,
   normalizeWidgetLayout,
+  normalizeWidgetLayoutForMode,
+  resolveDashboardGridGeometry,
 } from './grid-layout';
 
 void test('normalizes interrupted resize geometry to a visible card', () => {
@@ -47,6 +49,24 @@ void test('free placement preserves overlapping visual positions', () => {
       .map(({ i, x, y, w, h }) => ({ i, x, y, w, h })),
     overlapping,
   );
+});
+
+void test('free placement preserves positions beyond the initial viewport', () => {
+  const outsideInitialGrid = { x: 73, y: 6, w: 20, h: 18 };
+  assert.deepEqual(
+    normalizeWidgetLayoutForMode(outsideInitialGrid, 'free'),
+    outsideInitialGrid,
+  );
+
+  const geometry = resolveDashboardGridGeometry('free', 704, [
+    outsideInitialGrid,
+  ]);
+  assert.equal(geometry.columns, 101);
+  assert.ok(geometry.width > 704);
+  assert.deepEqual(resolveDashboardGridGeometry('snap', 704, []), {
+    columns: 12,
+    width: 704,
+  });
 });
 
 void test('keeps resized cards inside the available columns', () => {

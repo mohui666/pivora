@@ -635,6 +635,10 @@
     var(--muted);
   padding: 0.8rem;
 }
+.dashboard-export.freeform-canvas {
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
 .dashboard-grid-host {
   min-height: 35rem;
   min-width: 0;

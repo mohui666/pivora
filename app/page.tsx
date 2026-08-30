@@ -55,6 +55,7 @@ import ReactGridLayout, {
   type Layout,
   verticalCompactor,
 } from 'react-grid-layout';
+import { minMaxSize, type LayoutConstraint } from 'react-grid-layout/core';
 
 import { ChartVisual } from '@/components/bi/chart-visual';
 import { Badge } from '@/components/ui/badge';
@@ -110,6 +111,7 @@ import {
   convertWidgetLayoutMode,
   DASHBOARD_GRID_MODES,
   normalizeWidgetLayoutForMode,
+  resolveDashboardGridGeometry,
 } from '@/lib/grid-layout';
 import { REPORT_THEMES, upgradeReport } from '@/lib/report-schema';
 import { REPORT_TEMPLATES } from '@/lib/report-templates';
@@ -141,6 +143,14 @@ const FREE_PLACEMENT_COMPACTOR = getCompactor(
   DASHBOARD_GRID_MODES.free.allowOverlap,
   DASHBOARD_GRID_MODES.free.preventCollision,
 );
+const FREEFORM_ORIGIN_CONSTRAINT: LayoutConstraint = {
+  name: 'freeformOrigin',
+  constrainPosition: (_item, x, y) => ({
+    x: Math.max(0, x),
+    y: Math.max(0, y),
+  }),
+};
+const FREEFORM_CONSTRAINTS = [FREEFORM_ORIGIN_CONSTRAINT, minMaxSize];
 
 const AUTO_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -410,6 +420,11 @@ export default function Home() {
     (widget) => widget.pageId === activePage?.id && !widget.hidden,
   );
   const dashboardGrid = DASHBOARD_GRID_MODES[report.layoutMode];
+  const dashboardGeometry = resolveDashboardGridGeometry(
+    report.layoutMode,
+    gridWidth,
+    pageWidgets.map((widget) => widget.layout),
+  );
 
   const updateReport = useCallback(
     (updater: (current: ReportDocument) => ReportDocument) => {
@@ -1405,7 +1420,7 @@ export default function Home() {
     showNotice(
       mode === 'snap'
         ? 'Auto snap enabled. Visuals compact to the grid.'
-        : 'Freeform enabled. Visuals stay where placed and may overlap.',
+        : 'Freeform enabled. The canvas grows as you drag, and visuals may overlap.',
     );
   }
 
@@ -2256,7 +2271,7 @@ export default function Home() {
                       aria-pressed={report.layoutMode === 'free'}
                       disabled={!canEdit}
                       onClick={() => setLayoutMode('free')}
-                      title="Place visuals freely, including on top of each other"
+                      title="Use a growing canvas and place visuals on top of each other"
                     >
                       Freeform
                     </button>
@@ -2711,7 +2726,7 @@ export default function Home() {
 
               <div
                 ref={dashboardRef}
-                className="dashboard-export"
+                className={`dashboard-export ${report.layoutMode === 'free' ? 'freeform-canvas' : ''}`}
                 style={{ backgroundColor: activePage?.background }}
               >
                 <div ref={gridContainerRef} className="dashboard-grid-host">
@@ -2746,7 +2761,7 @@ export default function Home() {
                   {gridMounted && (
                     <ReactGridLayout
                       key={`${activePage?.id}:${report.layoutMode}`}
-                      width={gridWidth}
+                      width={dashboardGeometry.width}
                       layout={pageWidgets.map((widget) => ({
                         i: widget.id,
                         ...normalizeWidgetLayoutForMode(
@@ -2757,20 +2772,25 @@ export default function Home() {
                         minH: dashboardGrid.minimumHeight,
                       }))}
                       gridConfig={{
-                        cols: dashboardGrid.columns,
+                        cols: dashboardGeometry.columns,
                         rowHeight: dashboardGrid.rowHeight,
                         margin: dashboardGrid.margin,
                         containerPadding: [0, 0],
                       }}
                       dragConfig={{
                         enabled: canEdit,
-                        bounded: true,
+                        bounded: report.layoutMode === 'snap',
                         handle: '.drag-handle',
                         cancel:
                           '.visual-actions button,input,select,textarea,a',
                         threshold: 4,
                       }}
                       resizeConfig={{ enabled: canEdit, handles: ['se'] }}
+                      constraints={
+                        report.layoutMode === 'free'
+                          ? FREEFORM_CONSTRAINTS
+                          : undefined
+                      }
                       compactor={
                         report.layoutMode === 'snap'
                           ? verticalCompactor

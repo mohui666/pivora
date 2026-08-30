@@ -100,7 +100,7 @@ No Sites binding, hosted service, or external database is required.
 1. Select **New** to start from a blank canvas or guided local template, then choose **Import** for one or more supported files.
 2. Open **Data & clean** to build an ordered preparation pipeline, clean columns non-destructively, and inspect quality, frequency, and numeric distribution for every field.
 3. Open **Model** to define relationships, formulas such as `[revenue] - [cost]`, reusable measures, row rules, what-if parameters, and report-facing column metadata.
-4. Return to **Dashboard**, choose **Auto snap** or **Freeform**, create pages, add visuals, and configure aggregations, quick calculations, filter scopes, visual interactions, synced slicers, and page drillthrough fields. Freeform keeps fine positions and allows intentional overlap.
+4. Return to **Dashboard**, choose **Auto snap** or **Freeform**, create pages, add visuals, and configure aggregations, quick calculations, filter scopes, visual interactions, synced slicers, and page drillthrough fields. Freeform keeps fine positions, allows intentional overlap, and grows into a scrollable canvas when visuals move beyond the initial viewport.
 5. Click a chart value to cross-filter related visuals or transfer its context into a configured drillthrough page; capture useful states as bookmarks.
 6. Apply a report theme, undo/redo edits, save a restorable checkpoint, export a portable `.pivora` bundle, or render the active page to PNG/PDF.
 
@@ -121,7 +121,7 @@ Pivora uses a deliberately compact semantic layer:
 - **Drillthrough pages** declare one or more target fields and can transfer the selected value alone or preserve the full source context.
 - **Column profiles** calculate valid, empty, error, and distinct counts alongside top values, histograms, min/max, mean, median, and standard deviation.
 - **Pages, bookmarks, and themes** capture presentation and filter state without changing source data.
-- **Widgets** store query configuration, visibility, formatting, interactions, and a persisted 12-column snap or 48-column freeform layout. Freeform visuals may overlap; the selected or actively dragged visual rises to the front. Invalid legacy geometry is repaired when a report opens.
+- **Widgets** store query configuration, visibility, formatting, interactions, and a persisted 12-column snap or growing freeform layout. Freeform visuals may overlap or extend beyond the initial viewport; its scrollable canvas expands without changing existing pixel positions, and the selected or actively dragged visual rises to the front. Invalid legacy geometry is repaired when a report opens.
 
 Example calculated fields:
 

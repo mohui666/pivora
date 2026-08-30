@@ -4,6 +4,7 @@ export const DASHBOARD_GRID_COLUMNS = 12;
 export const MIN_WIDGET_WIDTH = 3;
 export const MIN_WIDGET_HEIGHT = 3;
 export const FREE_GRID_SCALE = 4;
+export const FREE_GRID_EDGE_BUFFER = 8;
 
 export const DASHBOARD_GRID_MODES = {
   snap: {
@@ -83,12 +84,65 @@ export function normalizeWidgetLayoutForMode(
   mode: LayoutMode,
 ): WidgetLayout {
   const grid = DASHBOARD_GRID_MODES[mode];
+  if (mode === 'free') {
+    return {
+      x: Math.max(0, finiteInteger(layout.x, 0)),
+      y: Math.max(0, finiteInteger(layout.y, 0)),
+      w: Math.max(
+        grid.minimumWidth,
+        finiteInteger(layout.w, grid.minimumWidth),
+      ),
+      h: Math.max(
+        grid.minimumHeight,
+        finiteInteger(layout.h, grid.minimumHeight),
+      ),
+    };
+  }
   return normalizeWidgetLayout(
     layout,
     grid.columns,
     grid.minimumWidth,
     grid.minimumHeight,
   );
+}
+
+/**
+ * Freeform reports use a scrollable canvas that grows with their content. The
+ * base 48-column viewport keeps snap/free conversion stable, while extra
+ * columns extend the canvas without changing the visual's pixel position.
+ */
+export function resolveDashboardGridGeometry(
+  mode: LayoutMode,
+  viewportWidth: number,
+  layouts: WidgetLayout[],
+): { columns: number; width: number } {
+  const safeViewportWidth = Math.max(1, finiteInteger(viewportWidth, 1));
+  const grid = DASHBOARD_GRID_MODES[mode];
+  if (mode === 'snap') {
+    return { columns: grid.columns, width: safeViewportWidth };
+  }
+
+  const contentEdge = layouts.reduce(
+    (maximum, layout) =>
+      Math.max(
+        maximum,
+        normalizeWidgetLayoutForMode(layout, 'free').x +
+          normalizeWidgetLayoutForMode(layout, 'free').w,
+      ),
+    0,
+  );
+  const columns = Math.max(
+    grid.columns,
+    Math.ceil(contentEdge + FREE_GRID_EDGE_BUFFER),
+  );
+  const horizontalMargin = grid.margin[0];
+  const basePitch = (safeViewportWidth + horizontalMargin) / grid.columns;
+  const width = Math.max(
+    safeViewportWidth,
+    Math.round(basePitch * columns - horizontalMargin),
+  );
+
+  return { columns, width };
 }
 
 export function convertWidgetLayoutMode(
