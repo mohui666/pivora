@@ -1,7 +1,8 @@
-"use client";
+'use client';
 
-import { toPng } from "html-to-image";
+import { toPng } from 'html-to-image';
 import {
+  BookmarkPlus,
   BookOpen,
   Calculator,
   Copy,
@@ -21,15 +22,17 @@ import {
   PencilRuler,
   Plus,
   RefreshCw,
+  Redo2,
   Save,
   Settings2,
   Share2,
   Sun,
   Table2,
   Trash2,
+  Undo2,
   Upload,
   X,
-} from "lucide-react";
+} from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -37,21 +40,26 @@ import {
   useMemo,
   useRef,
   useState,
-} from "react";
+} from 'react';
 import ReactGridLayout, {
   type Layout,
   useContainerWidth,
   verticalCompactor,
-} from "react-grid-layout";
+} from 'react-grid-layout';
 
-import { ChartVisual } from "@/components/bi/chart-visual";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ChartVisual } from '@/components/bi/chart-visual';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   NativeSelect,
   NativeSelectOption,
-} from "@/components/ui/native-select";
-import { aggregateRows, type Aggregation, inferFields } from "@/lib/analytics";
+} from '@/components/ui/native-select';
+import {
+  aggregateRows,
+  applyQuickCalculation,
+  type Aggregation,
+  inferFields,
+} from '@/lib/analytics';
 import {
   createId,
   filterRows,
@@ -59,7 +67,7 @@ import {
   materializeTable,
   validateCalculatedExpression,
   validateRelationship,
-} from "@/lib/bi-model";
+} from '@/lib/bi-model';
 import type {
   CalculatedField,
   ChartKind,
@@ -67,26 +75,29 @@ import type {
   ColumnTransform,
   DataTable,
   NumberFormat,
+  QueryStep,
   Relationship,
   ReportDocument,
+  ReportPage,
   ReportRole,
   ReportSummary,
-} from "@/lib/bi-types";
-import { parseDataFile } from "@/lib/data-import";
+} from '@/lib/bi-types';
+import { parseDataFile } from '@/lib/data-import';
+import { REPORT_THEMES, upgradeReport } from '@/lib/report-schema';
 import {
   deleteReport,
   listReports,
   loadReport,
   saveReport,
-} from "@/lib/report-storage";
-import { createSampleReport } from "@/lib/sample-report";
+} from '@/lib/report-storage';
+import { createSampleReport } from '@/lib/sample-report';
 
-type View = "dashboard" | "data" | "model";
+type View = 'dashboard' | 'data' | 'model';
 type LocalFileHandle = { name: string; getFile: () => Promise<File> };
 
 function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
+  const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = fileName;
   anchor.click();
@@ -95,54 +106,92 @@ function downloadBlob(blob: Blob, fileName: string) {
 
 function defaultWidget(
   table: DataTable,
-  rows: DataTable["rows"],
+  rows: DataTable['rows'],
   y: number,
+  pageId: string,
 ): ChartWidget {
   const fields = inferFields(rows);
   const dimension =
-    fields.find((field) => field.kind !== "number") ?? fields[0];
-  const measure = fields.find((field) => field.kind === "number");
+    fields.find((field) => field.kind !== 'number') ?? fields[0];
+  const measure = fields.find((field) => field.kind === 'number');
   return {
-    id: createId("widget"),
+    id: createId('widget'),
+    pageId,
     title: `New visual · ${table.name}`,
     tableId: table.id,
-    kind: measure ? "bar" : "table",
-    dimension: dimension?.name ?? "",
-    measure: measure?.name ?? "__rows",
-    aggregation: measure ? "sum" : "count",
-    color: "#4f6df5",
+    kind: measure ? 'bar' : 'table',
+    dimension: dimension?.name ?? '',
+    measure: measure?.name ?? '__rows',
+    aggregation: measure ? 'sum' : 'count',
+    calculation: 'none',
+    color: '#4f6df5',
     showGrid: true,
     showLegend: false,
-    numberFormat: "compact",
+    numberFormat: 'compact',
     interactions: true,
     layout: { x: 0, y, w: 6, h: 7 },
   };
 }
 
+type ReportHistory = {
+  past: ReportDocument[];
+  present: ReportDocument;
+  future: ReportDocument[];
+};
+
 export default function Home() {
-  const [report, setReport] = useState<ReportDocument>(() =>
-    createSampleReport(),
-  );
-  const [view, setView] = useState<View>("dashboard");
-  const [activeTableId, setActiveTableId] = useState("table_sales");
-  const [selectedWidgetId, setSelectedWidgetId] = useState("widget_revenue");
+  const [history, setHistory] = useState<ReportHistory>(() => ({
+    past: [],
+    present: createSampleReport(),
+    future: [],
+  }));
+  const report = history.present;
+  const [view, setView] = useState<View>('dashboard');
+  const [activePageId, setActivePageId] = useState('page_overview');
+  const [activeTableId, setActiveTableId] = useState('table_sales');
+  const [selectedWidgetId, setSelectedWidgetId] = useState('widget_revenue');
   const [dark, setDark] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState('');
   const [importing, setImporting] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [savedReports, setSavedReports] = useState<ReportSummary[]>([]);
   const [dataPage, setDataPage] = useState(0);
-  const [dataSearch, setDataSearch] = useState("");
-  const [relationDraft, setRelationDraft] = useState({
-    leftTableId: "table_sales",
-    leftField: "product_id",
-    rightTableId: "table_products",
-    rightField: "product_id",
+  const [dataSearch, setDataSearch] = useState('');
+  const [relationDraft, setRelationDraft] = useState<Omit<Relationship, 'id'>>({
+    leftTableId: 'table_sales',
+    leftField: 'product_id',
+    rightTableId: 'table_products',
+    rightField: 'product_id',
+    cardinality: 'many-to-one',
+    crossFilterDirection: 'single',
+    active: true,
   });
   const [calcDraft, setCalcDraft] = useState({
-    tableId: "table_sales",
-    name: "",
-    expression: "",
+    tableId: 'table_sales',
+    name: '',
+    expression: '',
+  });
+  const [queryDraft, setQueryDraft] = useState<
+    Pick<
+      QueryStep,
+      | 'kind'
+      | 'field'
+      | 'operator'
+      | 'value'
+      | 'direction'
+      | 'count'
+      | 'name'
+      | 'start'
+    >
+  >({
+    kind: 'filter',
+    field: 'order_id',
+    operator: 'contains',
+    value: '',
+    direction: 'ascending',
+    count: 1000,
+    name: 'Index',
+    start: 1,
   });
   const dataInput = useRef<HTMLInputElement>(null);
   const reportInput = useRef<HTMLInputElement>(null);
@@ -154,29 +203,185 @@ export default function Home() {
     mounted: gridMounted,
   } = useContainerWidth({ initialWidth: 1100 });
 
-  const canEdit = report.role !== "viewer";
-  const canManage = report.role === "owner";
+  const canEdit = report.role !== 'viewer';
+  const canManage = report.role === 'owner';
   const activeTable =
     report.tables.find((table) => table.id === activeTableId) ??
     report.tables[0];
   const selectedWidget = report.widgets.find(
     (widget) => widget.id === selectedWidgetId,
   );
+  const activePage =
+    report.pages.find((page) => page.id === activePageId) ?? report.pages[0];
+  const pageWidgets = report.widgets.filter(
+    (widget) => widget.pageId === activePage?.id && !widget.hidden,
+  );
 
   const updateReport = useCallback(
     (updater: (current: ReportDocument) => ReportDocument) => {
-      setReport((current) => {
-        const next = updater(current);
-        return next === current
-          ? current
-          : { ...next, updatedAt: new Date().toISOString() };
+      setHistory((current) => {
+        const next = updater(current.present);
+        if (next === current.present) return current;
+        return {
+          past: [...current.past, current.present].slice(-60),
+          present: { ...next, updatedAt: new Date().toISOString() },
+          future: [],
+        };
       });
     },
     [],
   );
 
+  function replaceReport(next: ReportDocument) {
+    setHistory({ past: [], present: upgradeReport(next), future: [] });
+  }
+
+  function undo() {
+    setHistory((current) => {
+      const previous = current.past.at(-1);
+      if (!previous) return current;
+      return {
+        past: current.past.slice(0, -1),
+        present: previous,
+        future: [current.present, ...current.future].slice(0, 60),
+      };
+    });
+  }
+
+  function redo() {
+    setHistory((current) => {
+      const next = current.future[0];
+      if (!next) return current;
+      return {
+        past: [...current.past, current.present].slice(-60),
+        present: next,
+        future: current.future.slice(1),
+      };
+    });
+  }
+
+  function selectPage(pageId: string) {
+    setActivePageId(pageId);
+    const first = report.widgets.find(
+      (widget) => widget.pageId === pageId && !widget.hidden,
+    );
+    setSelectedWidgetId(first?.id ?? '');
+  }
+
+  function addPage() {
+    if (!canEdit) return;
+    const page: ReportPage = {
+      id: createId('page'),
+      name: `Page ${report.pages.length + 1}`,
+      hidden: false,
+      background: report.theme.canvas,
+    };
+    updateReport((current) => ({
+      ...current,
+      pages: [...current.pages, page],
+    }));
+    setActivePageId(page.id);
+    setSelectedWidgetId('');
+  }
+
+  function duplicatePage() {
+    if (!canEdit || !activePage) return;
+    const page: ReportPage = {
+      ...activePage,
+      id: createId('page'),
+      name: `${activePage.name} copy`,
+    };
+    const copies = report.widgets
+      .filter((widget) => widget.pageId === activePage.id)
+      .map((widget) => ({
+        ...widget,
+        id: createId('widget'),
+        pageId: page.id,
+        layout: { ...widget.layout },
+      }));
+    updateReport((current) => ({
+      ...current,
+      pages: [...current.pages, page],
+      widgets: [...current.widgets, ...copies],
+    }));
+    setActivePageId(page.id);
+    setSelectedWidgetId(copies[0]?.id ?? '');
+  }
+
+  function removePage() {
+    if (!canEdit || !activePage) return;
+    if (report.pages.length === 1) {
+      showNotice('A report must contain at least one page.');
+      return;
+    }
+    const next = report.pages.find((page) => page.id !== activePage.id);
+    updateReport((current) => ({
+      ...current,
+      pages: current.pages.filter((page) => page.id !== activePage.id),
+      widgets: current.widgets.filter(
+        (widget) => widget.pageId !== activePage.id,
+      ),
+      bookmarks: current.bookmarks.filter(
+        (bookmark) => bookmark.pageId !== activePage.id,
+      ),
+    }));
+    if (next) selectPage(next.id);
+  }
+
+  function addBookmark() {
+    if (!canEdit || !activePage) return;
+    updateReport((current) => ({
+      ...current,
+      bookmarks: [
+        ...current.bookmarks,
+        {
+          id: createId('bookmark'),
+          name: `Bookmark ${current.bookmarks.length + 1}`,
+          pageId: activePage.id,
+          filters: current.filters.map((filter) => ({ ...filter })),
+          hiddenWidgetIds: current.widgets
+            .filter((widget) => widget.hidden)
+            .map((widget) => widget.id),
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    }));
+    showNotice('Bookmark captured with page, filters, and visibility.');
+  }
+
+  function applyBookmark(bookmarkId: string) {
+    const bookmark = report.bookmarks.find((item) => item.id === bookmarkId);
+    if (!bookmark) return;
+    setActivePageId(bookmark.pageId);
+    updateReport((current) => ({
+      ...current,
+      filters: bookmark.filters.map((filter) => ({ ...filter })),
+      widgets: current.widgets.map((widget) => ({
+        ...widget,
+        hidden: bookmark.hiddenWidgetIds.includes(widget.id),
+      })),
+    }));
+  }
+
+  function applyTheme(themeId: string) {
+    const theme = REPORT_THEMES.find((item) => item.id === themeId);
+    if (!theme) return;
+    updateReport((current) => ({
+      ...current,
+      theme,
+      pages: current.pages.map((page) => ({
+        ...page,
+        background: theme.canvas,
+      })),
+      widgets: current.widgets.map((widget, index) => ({
+        ...widget,
+        color: theme.palette[index % theme.palette.length],
+      })),
+    }));
+  }
+
   const materialized = useMemo(() => {
-    const map = new Map<string, DataTable["rows"]>();
+    const map = new Map<string, DataTable['rows']>();
     for (const table of report.tables) {
       map.set(
         table.id,
@@ -186,6 +391,7 @@ export default function Home() {
           relationships: report.relationships,
           calculatedFields: report.calculatedFields,
           transforms: report.transforms,
+          querySteps: report.querySteps,
         }),
       );
     }
@@ -195,6 +401,7 @@ export default function Home() {
     report.relationships,
     report.tables,
     report.transforms,
+    report.querySteps,
   ]);
 
   const fieldsFor = useCallback(
@@ -212,14 +419,20 @@ export default function Home() {
       const dimensionKind =
         fieldsFor(widget.tableId).find(
           (field) => field.name === widget.dimension,
-        )?.kind ?? "text";
-      return aggregateRows({
+        )?.kind ?? 'text';
+      let points = aggregateRows({
         rows: filtered,
         dimension: widget.dimension,
         dimensionKind,
         measure: widget.measure,
         aggregation: widget.aggregation,
       });
+      points = applyQuickCalculation(points, widget.calculation);
+      if (widget.sortDirection !== 'none') {
+        const direction = widget.sortDirection === 'ascending' ? 1 : -1;
+        points = [...points].sort((a, b) => (a.value - b.value) * direction);
+      }
+      return points.slice(0, Math.max(1, widget.topN ?? 20));
     },
     [fieldsFor, materialized, report.filters, report.tables],
   );
@@ -229,7 +442,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
+    document.documentElement.classList.toggle('dark', dark);
   }, [dark]);
 
   useEffect(() => {
@@ -241,7 +454,7 @@ export default function Home() {
 
   function showNotice(message: string) {
     setNotice(message);
-    window.setTimeout(() => setNotice(""), 3600);
+    window.setTimeout(() => setNotice(''), 3600);
   }
 
   async function mergeFiles(
@@ -272,7 +485,14 @@ export default function Home() {
         const tables = [...retained, ...reconciled];
         let widgets = current.widgets;
         if (!widgets.length && reconciled[0]) {
-          widgets = [defaultWidget(reconciled[0], reconciled[0].rows, 0)];
+          widgets = [
+            defaultWidget(
+              reconciled[0],
+              reconciled[0].rows,
+              0,
+              current.pages[0]?.id ?? 'page_overview',
+            ),
+          ];
         }
         return { ...current, tables, widgets };
       });
@@ -292,7 +512,7 @@ export default function Home() {
         );
       }
     } catch (error) {
-      showNotice(error instanceof Error ? error.message : "Import failed.");
+      showNotice(error instanceof Error ? error.message : 'Import failed.');
     } finally {
       setImporting(false);
     }
@@ -318,7 +538,7 @@ export default function Home() {
       );
       await mergeFiles(files, handles);
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
         dataInput.current?.click();
       }
     }
@@ -329,13 +549,13 @@ export default function Home() {
     if (!handles.length) {
       if (!silent)
         showNotice(
-          "Re-import with the file picker once to grant refresh access.",
+          'Re-import with the file picker once to grant refresh access.',
         );
       return;
     }
     const files = await Promise.all(handles.map((handle) => handle.getFile()));
     await mergeFiles(files, handles, silent);
-    if (!silent) showNotice("Local sources refreshed.");
+    if (!silent) showNotice('Local sources refreshed.');
   }
 
   const onAutoRefresh = useEffectEvent(() => {
@@ -351,8 +571,8 @@ export default function Home() {
   }, [report.refreshSeconds]);
 
   function addWidget() {
-    if (!canEdit || !activeTable) return;
-    const y = report.widgets.reduce(
+    if (!canEdit || !activeTable || !activePage) return;
+    const y = pageWidgets.reduce(
       (maximum, widget) => Math.max(maximum, widget.layout.y + widget.layout.h),
       0,
     );
@@ -360,13 +580,14 @@ export default function Home() {
       activeTable,
       materialized.get(activeTable.id) ?? activeTable.rows,
       y,
+      activePage.id,
     );
     updateReport((current) => ({
       ...current,
       widgets: [...current.widgets, widget],
     }));
     setSelectedWidgetId(widget.id);
-    setView("dashboard");
+    setView('dashboard');
   }
 
   function updateWidget(id: string, patch: Partial<ChartWidget>) {
@@ -382,7 +603,7 @@ export default function Home() {
   function duplicateWidget(widget: ChartWidget) {
     const copy: ChartWidget = {
       ...widget,
-      id: createId("widget"),
+      id: createId('widget'),
       title: `${widget.title} copy`,
       layout: { ...widget.layout, y: widget.layout.y + widget.layout.h },
     };
@@ -399,17 +620,17 @@ export default function Home() {
       widgets: current.widgets.filter((widget) => widget.id !== id),
       filters: current.filters.filter((filter) => filter.sourceWidgetId !== id),
     }));
-    setSelectedWidgetId("");
+    setSelectedWidgetId('');
   }
 
   function applyCrossFilter(widget: ChartWidget, value: string) {
     if (!widget.interactions) return;
-    const [prefix, ...rest] = widget.dimension.split(".");
+    const [prefix, ...rest] = widget.dimension.split('.');
     const related = rest.length
       ? report.tables.find((table) => table.name === prefix)
       : undefined;
     const tableId = related?.id ?? widget.tableId;
-    const field = related ? rest.join(".") : widget.dimension;
+    const field = related ? rest.join('.') : widget.dimension;
     updateReport((current) => {
       const previous = current.filters.find(
         (filter) => filter.sourceWidgetId === widget.id,
@@ -423,7 +644,7 @@ export default function Home() {
         filters: [
           ...filters,
           {
-            id: createId("filter"),
+            id: createId('filter'),
             tableId,
             field,
             value,
@@ -470,12 +691,13 @@ export default function Home() {
           transform.tableId === tableId && transform.field === field,
       );
       const transform: ColumnTransform = {
-        id: existing?.id ?? createId("transform"),
+        id: existing?.id ?? createId('transform'),
         tableId,
         field,
-        kind: inferred?.kind ?? "text",
+        kind: inferred?.kind ?? 'text',
         trim: false,
-        fillNull: "",
+        fillNull: '',
+        remove: false,
         ...existing,
         ...patch,
       };
@@ -496,7 +718,7 @@ export default function Home() {
     const error = validateRelationship(relationDraft, report.tables);
     if (error) return showNotice(error);
     const relationship: Relationship = {
-      id: createId("relation"),
+      id: createId('relation'),
       ...relationDraft,
     };
     updateReport((current) => ({
@@ -504,16 +726,16 @@ export default function Home() {
       relationships: [...current.relationships, relationship],
     }));
     showNotice(
-      "Relationship added. Related fields are now available to visuals.",
+      'Relationship added. Related fields are now available to visuals.',
     );
   }
 
   function addCalculatedField() {
     const error = validateCalculatedExpression(calcDraft.expression);
-    if (!calcDraft.name.trim()) return showNotice("Name the calculated field.");
+    if (!calcDraft.name.trim()) return showNotice('Name the calculated field.');
     if (error) return showNotice(error);
     const field: CalculatedField = {
-      id: createId("calc"),
+      id: createId('calc'),
       tableId: calcDraft.tableId,
       name: calcDraft.name.trim(),
       expression: calcDraft.expression,
@@ -522,77 +744,98 @@ export default function Home() {
       ...current,
       calculatedFields: [...current.calculatedFields, field],
     }));
-    setCalcDraft((current) => ({ ...current, name: "", expression: "" }));
-    showNotice("Calculated field added.");
+    setCalcDraft((current) => ({ ...current, name: '', expression: '' }));
+    showNotice('Calculated field added.');
+  }
+
+  function addQueryStep() {
+    if (!canEdit || !activeTable) return;
+    if (
+      ['filter', 'sort', 'remove-duplicates'].includes(queryDraft.kind) &&
+      !queryDraft.field
+    ) {
+      return showNotice('Choose a field for this query step.');
+    }
+    const step: QueryStep = {
+      id: createId('query'),
+      tableId: activeTable.id,
+      enabled: true,
+      ...queryDraft,
+      count: Math.max(0, queryDraft.count),
+      name: queryDraft.name.trim() || 'Index',
+    };
+    updateReport((current) => ({
+      ...current,
+      querySteps: [...current.querySteps, step],
+    }));
+    showNotice('Query step applied non-destructively.');
   }
 
   async function saveNow() {
     await saveReport(report);
     await refreshLibrary();
-    showNotice("Report saved to this browser.");
+    showNotice('Report saved to this browser.');
   }
 
   function exportReport() {
     downloadBlob(
-      new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }),
-      `${report.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.llbi`,
+      new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
+      `${report.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.llbi`,
     );
   }
 
   async function importReport(file?: File) {
     if (!file) return;
     try {
-      const value = JSON.parse(await file.text()) as ReportDocument;
-      if (value.schemaVersion !== 2 || !Array.isArray(value.tables)) {
-        throw new Error("This is not a LocalLens BI report bundle.");
-      }
-      setReport(value);
-      setActiveTableId(value.tables[0]?.id ?? "");
-      setSelectedWidgetId(value.widgets[0]?.id ?? "");
+      const value = upgradeReport(JSON.parse(await file.text()));
+      replaceReport(value);
+      setActiveTableId(value.tables[0]?.id ?? '');
+      setSelectedWidgetId(value.widgets[0]?.id ?? '');
+      setActivePageId(value.pages[0]?.id ?? '');
       await saveReport(value);
       await refreshLibrary();
-      showNotice("Report bundle opened.");
+      showNotice('Report bundle opened.');
     } catch (error) {
       showNotice(
-        error instanceof Error ? error.message : "Could not open report.",
+        error instanceof Error ? error.message : 'Could not open report.',
       );
     }
   }
 
-  async function exportDashboard(kind: "png" | "pdf") {
+  async function exportDashboard(kind: 'png' | 'pdf') {
     if (!dashboardRef.current) return;
     showNotice(`Preparing ${kind.toUpperCase()}…`);
     const dataUrl = await toPng(dashboardRef.current, {
       cacheBust: true,
       pixelRatio: 2,
-      backgroundColor: dark ? "#151a24" : "#f5f7fb",
+      backgroundColor: activePage?.background ?? (dark ? '#151a24' : '#f5f7fb'),
     });
-    if (kind === "png") {
+    if (kind === 'png') {
       const response = await fetch(dataUrl);
       downloadBlob(await response.blob(), `${report.name}.png`);
       return;
     }
-    const { jsPDF } = await import("jspdf");
+    const { jsPDF } = await import('jspdf');
     const image = new Image();
     await new Promise<void>((resolve) => {
       image.onload = () => resolve();
       image.src = dataUrl;
     });
     const pdf = new jsPDF({
-      orientation: "landscape",
-      unit: "px",
+      orientation: 'landscape',
+      unit: 'px',
       format: [image.width, image.height],
     });
-    pdf.addImage(dataUrl, "PNG", 0, 0, image.width, image.height);
+    pdf.addImage(dataUrl, 'PNG', 0, 0, image.width, image.height);
     pdf.save(`${report.name}.pdf`);
   }
 
-  const activeRows = materialized.get(activeTable?.id ?? "") ?? [];
+  const activeRows = materialized.get(activeTable?.id ?? '') ?? [];
   const activeFields = materializedFields(activeRows);
   const searchedRows = dataSearch
     ? activeRows.filter((row) =>
         Object.values(row).some((value) =>
-          String(value ?? "")
+          String(value ?? '')
             .toLowerCase()
             .includes(dataSearch.toLowerCase()),
         ),
@@ -607,7 +850,7 @@ export default function Home() {
     ? fieldsFor(selectedWidget.tableId)
     : [];
   const selectedNumericFields = selectedFields.filter(
-    (field) => field.kind === "number",
+    (field) => field.kind === 'number',
   );
   const rawActiveFields = inferFields(activeTable?.rows ?? []);
 
@@ -617,7 +860,7 @@ export default function Home() {
         ref={dataInput}
         type="file"
         multiple
-        accept=".csv,.json,.xlsx,.xls,.xlsm,.sqlite,.sqlite3,.db"
+        accept=".csv,.json,.xml,.xlsx,.xls,.xlsm,.sqlite,.sqlite3,.db"
         className="sr-only"
         onChange={(event) =>
           void mergeFiles(Array.from(event.target.files ?? []))
@@ -670,6 +913,37 @@ export default function Home() {
             <NativeSelectOption value="editor">Editor</NativeSelectOption>
             <NativeSelectOption value="viewer">Viewer</NativeSelectOption>
           </NativeSelect>
+          <NativeSelect
+            size="sm"
+            value={report.theme.id}
+            aria-label="Report theme"
+            disabled={!canEdit}
+            onChange={(event) => applyTheme(event.target.value)}
+          >
+            {REPORT_THEMES.map((theme) => (
+              <NativeSelectOption key={theme.id} value={theme.id}>
+                {theme.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Undo"
+            disabled={!history.past.length}
+            onClick={undo}
+          >
+            <Undo2 />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Redo"
+            disabled={!history.future.length}
+            onClick={redo}
+          >
+            <Redo2 />
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -705,34 +979,34 @@ export default function Home() {
       {notice && (
         <output className="notice">
           {notice}
-          <button aria-label="Dismiss" onClick={() => setNotice("")}>
+          <button aria-label="Dismiss" onClick={() => setNotice('')}>
             <X />
           </button>
         </output>
       )}
 
       <div
-        className={`bi-workspace ${view === "dashboard" ? "with-inspector" : ""}`}
+        className={`bi-workspace ${view === 'dashboard' ? 'with-inspector' : ''}`}
       >
         <aside className="bi-sidebar">
           <nav className="space-y-1" aria-label="Workspace">
             <button
-              className={`nav-item ${view === "dashboard" ? "nav-item-active" : ""}`}
-              onClick={() => setView("dashboard")}
+              className={`nav-item ${view === 'dashboard' ? 'nav-item-active' : ''}`}
+              onClick={() => setView('dashboard')}
             >
               <LayoutDashboard />
               Dashboard
             </button>
             <button
-              className={`nav-item ${view === "data" ? "nav-item-active" : ""}`}
-              onClick={() => setView("data")}
+              className={`nav-item ${view === 'data' ? 'nav-item-active' : ''}`}
+              onClick={() => setView('data')}
             >
               <Table2 />
               Data & clean
             </button>
             <button
-              className={`nav-item ${view === "model" ? "nav-item-active" : ""}`}
-              onClick={() => setView("model")}
+              className={`nav-item ${view === 'model' ? 'nav-item-active' : ''}`}
+              onClick={() => setView('model')}
             >
               <Link2 />
               Model
@@ -753,7 +1027,7 @@ export default function Home() {
             {report.tables.map((table) => (
               <button
                 key={table.id}
-                className={`table-source ${activeTable?.id === table.id ? "active" : ""}`}
+                className={`table-source ${activeTable?.id === table.id ? 'active' : ''}`}
                 onClick={() => {
                   setActiveTableId(table.id);
                   setDataPage(0);
@@ -765,7 +1039,7 @@ export default function Home() {
                 <span className="min-w-0 flex-1">
                   <strong>{table.name}</strong>
                   <small>
-                    {table.rows.length.toLocaleString()} rows ·{" "}
+                    {table.rows.length.toLocaleString()} rows ·{' '}
                     {table.sourceKind}
                   </small>
                 </span>
@@ -817,7 +1091,7 @@ export default function Home() {
         </aside>
 
         <section className="bi-main">
-          {view === "dashboard" && (
+          {view === 'dashboard' && (
             <div className="dashboard-page">
               <div className="page-toolbar">
                 <div>
@@ -840,6 +1114,15 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!canEdit}
+                    onClick={addBookmark}
+                  >
+                    <BookmarkPlus />
+                    Bookmark
+                  </Button>
                   <Button variant="outline" size="sm" onClick={exportReport}>
                     <Share2 />
                     Report bundle
@@ -847,7 +1130,7 @@ export default function Home() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void exportDashboard("png")}
+                    onClick={() => void exportDashboard('png')}
                   >
                     <ImageDown />
                     PNG
@@ -855,13 +1138,88 @@ export default function Home() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void exportDashboard("pdf")}
+                    onClick={() => void exportDashboard('pdf')}
                   >
                     <FileDown />
                     PDF
                   </Button>
                 </div>
               </div>
+
+              <div className="report-page-bar">
+                <div
+                  className="page-tabs"
+                  role="tablist"
+                  aria-label="Report pages"
+                >
+                  {report.pages
+                    .filter((page) => !page.hidden || canEdit)
+                    .map((page) => (
+                      <button
+                        key={page.id}
+                        role="tab"
+                        aria-selected={page.id === activePage?.id}
+                        className={page.id === activePage?.id ? 'active' : ''}
+                        onClick={() => selectPage(page.id)}
+                      >
+                        {page.name}
+                        {page.hidden && <small>hidden</small>}
+                      </button>
+                    ))}
+                  {canEdit && (
+                    <button
+                      className="page-icon-button"
+                      onClick={addPage}
+                      aria-label="Add report page"
+                    >
+                      <Plus />
+                    </button>
+                  )}
+                </div>
+                {canEdit && (
+                  <div className="page-actions">
+                    <Button variant="ghost" size="sm" onClick={duplicatePage}>
+                      <Copy /> Duplicate page
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Delete page"
+                      onClick={removePage}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {report.bookmarks.length > 0 && (
+                <div className="bookmark-strip">
+                  <BookOpen />
+                  {report.bookmarks.map((bookmark) => (
+                    <span className="bookmark-chip" key={bookmark.id}>
+                      <button onClick={() => applyBookmark(bookmark.id)}>
+                        {bookmark.name}
+                      </button>
+                      {canEdit && (
+                        <button
+                          aria-label={`Delete ${bookmark.name}`}
+                          onClick={() =>
+                            updateReport((current) => ({
+                              ...current,
+                              bookmarks: current.bookmarks.filter(
+                                (item) => item.id !== bookmark.id,
+                              ),
+                            }))
+                          }
+                        >
+                          <X />
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
 
               {report.filters.length > 0 && (
                 <div className="filter-strip">
@@ -901,12 +1259,16 @@ export default function Home() {
                 </div>
               )}
 
-              <div ref={dashboardRef} className="dashboard-export">
+              <div
+                ref={dashboardRef}
+                className="dashboard-export"
+                style={{ backgroundColor: activePage?.background }}
+              >
                 <div ref={gridContainerRef} className="dashboard-grid-host">
                   {gridMounted && (
                     <ReactGridLayout
                       width={gridWidth}
-                      layout={report.widgets.map((widget) => ({
+                      layout={pageWidgets.map((widget) => ({
                         i: widget.id,
                         ...widget.layout,
                         minW: 3,
@@ -920,17 +1282,17 @@ export default function Home() {
                       }}
                       dragConfig={{
                         enabled: canEdit,
-                        handle: ".drag-handle",
-                        cancel: "button,input,select",
+                        handle: '.drag-handle',
+                        cancel: 'button,input,select',
                       }}
-                      resizeConfig={{ enabled: canEdit, handles: ["se"] }}
+                      resizeConfig={{ enabled: canEdit, handles: ['se'] }}
                       compactor={verticalCompactor}
                       onLayoutChange={updateLayout}
                     >
-                      {report.widgets.map((widget) => (
+                      {pageWidgets.map((widget) => (
                         <article
                           key={widget.id}
-                          className={`visual-card ${selectedWidgetId === widget.id ? "selected" : ""}`}
+                          className={`visual-card ${selectedWidgetId === widget.id ? 'selected' : ''}`}
                         >
                           <header className="drag-handle">
                             <button
@@ -967,6 +1329,14 @@ export default function Home() {
                             <ChartVisual
                               widget={widget}
                               points={pointsFor(widget)}
+                              secondaryPoints={
+                                widget.secondaryMeasure
+                                  ? pointsFor({
+                                      ...widget,
+                                      measure: widget.secondaryMeasure,
+                                    })
+                                  : undefined
+                              }
                               onPointClick={(value) =>
                                 applyCrossFilter(widget, value)
                               }
@@ -981,7 +1351,7 @@ export default function Home() {
             </div>
           )}
 
-          {view === "data" && activeTable && (
+          {view === 'data' && activeTable && (
             <div className="data-page">
               <div className="page-toolbar">
                 <div>
@@ -1015,6 +1385,252 @@ export default function Home() {
               </div>
 
               <div className="data-prep-grid">
+                <section className="prep-panel query-steps-panel">
+                  <div className="panel-title">
+                    <Filter />
+                    <div>
+                      <strong>Applied query steps</strong>
+                      <small>
+                        Filter, sort, deduplicate, limit, and add an index in
+                        order.
+                      </small>
+                    </div>
+                  </div>
+                  <div className="query-step-form">
+                    <NativeSelect
+                      value={queryDraft.kind}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        setQueryDraft((draft) => ({
+                          ...draft,
+                          kind: event.target.value as QueryStep['kind'],
+                        }))
+                      }
+                    >
+                      <NativeSelectOption value="filter">
+                        Filter rows
+                      </NativeSelectOption>
+                      <NativeSelectOption value="sort">
+                        Sort rows
+                      </NativeSelectOption>
+                      <NativeSelectOption value="remove-duplicates">
+                        Remove duplicates
+                      </NativeSelectOption>
+                      <NativeSelectOption value="limit">
+                        Keep first rows
+                      </NativeSelectOption>
+                      <NativeSelectOption value="add-index">
+                        Add index
+                      </NativeSelectOption>
+                    </NativeSelect>
+                    {['filter', 'sort', 'remove-duplicates'].includes(
+                      queryDraft.kind,
+                    ) && (
+                      <NativeSelect
+                        value={queryDraft.field}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setQueryDraft((draft) => ({
+                            ...draft,
+                            field: event.target.value,
+                          }))
+                        }
+                      >
+                        {rawActiveFields.map((field) => (
+                          <NativeSelectOption
+                            key={field.name}
+                            value={field.name}
+                          >
+                            {field.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    )}
+                    {queryDraft.kind === 'filter' && (
+                      <>
+                        <NativeSelect
+                          value={queryDraft.operator}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              operator: event.target
+                                .value as QueryStep['operator'],
+                            }))
+                          }
+                        >
+                          <NativeSelectOption value="equals">
+                            Equals
+                          </NativeSelectOption>
+                          <NativeSelectOption value="not-equals">
+                            Not equals
+                          </NativeSelectOption>
+                          <NativeSelectOption value="contains">
+                            Contains
+                          </NativeSelectOption>
+                          <NativeSelectOption value="greater-than">
+                            Greater than
+                          </NativeSelectOption>
+                          <NativeSelectOption value="less-than">
+                            Less than
+                          </NativeSelectOption>
+                          <NativeSelectOption value="is-blank">
+                            Is blank
+                          </NativeSelectOption>
+                          <NativeSelectOption value="not-blank">
+                            Is not blank
+                          </NativeSelectOption>
+                        </NativeSelect>
+                        {!queryDraft.operator.includes('blank') && (
+                          <input
+                            className="form-input"
+                            placeholder="Filter value"
+                            value={queryDraft.value}
+                            disabled={!canEdit}
+                            onChange={(event) =>
+                              setQueryDraft((draft) => ({
+                                ...draft,
+                                value: event.target.value,
+                              }))
+                            }
+                          />
+                        )}
+                      </>
+                    )}
+                    {queryDraft.kind === 'sort' && (
+                      <NativeSelect
+                        value={queryDraft.direction}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setQueryDraft((draft) => ({
+                            ...draft,
+                            direction: event.target
+                              .value as QueryStep['direction'],
+                          }))
+                        }
+                      >
+                        <NativeSelectOption value="ascending">
+                          Ascending
+                        </NativeSelectOption>
+                        <NativeSelectOption value="descending">
+                          Descending
+                        </NativeSelectOption>
+                      </NativeSelect>
+                    )}
+                    {queryDraft.kind === 'limit' && (
+                      <input
+                        className="form-input"
+                        type="number"
+                        min="0"
+                        value={queryDraft.count}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setQueryDraft((draft) => ({
+                            ...draft,
+                            count: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    )}
+                    {queryDraft.kind === 'add-index' && (
+                      <>
+                        <input
+                          className="form-input"
+                          placeholder="Index column"
+                          value={queryDraft.name}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              name: event.target.value,
+                            }))
+                          }
+                        />
+                        <input
+                          className="form-input"
+                          type="number"
+                          aria-label="Index start"
+                          value={queryDraft.start}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              start: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={addQueryStep}
+                      disabled={!canEdit}
+                    >
+                      <Plus /> Apply step
+                    </Button>
+                  </div>
+                  <div className="query-step-list">
+                    {report.querySteps
+                      .filter((step) => step.tableId === activeTable.id)
+                      .map((step, index) => (
+                        <div key={step.id}>
+                          <span>{index + 1}</span>
+                          <strong>{step.kind.replaceAll('-', ' ')}</strong>
+                          <small>
+                            {step.kind === 'filter'
+                              ? `${step.field} · ${step.operator} ${step.value}`
+                              : step.kind === 'sort'
+                                ? `${step.field} · ${step.direction}`
+                                : step.kind === 'remove-duplicates'
+                                  ? step.field
+                                  : step.kind === 'limit'
+                                    ? `${step.count} rows`
+                                    : `${step.name} from ${step.start}`}
+                          </small>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={step.enabled}
+                              disabled={!canEdit}
+                              onChange={(event) =>
+                                updateReport((current) => ({
+                                  ...current,
+                                  querySteps: current.querySteps.map(
+                                    (candidate) =>
+                                      candidate.id === step.id
+                                        ? {
+                                            ...candidate,
+                                            enabled: event.target.checked,
+                                          }
+                                        : candidate,
+                                  ),
+                                }))
+                              }
+                            />
+                            Enabled
+                          </label>
+                          {canEdit && (
+                            <button
+                              aria-label={`Delete query step ${index + 1}`}
+                              onClick={() =>
+                                updateReport((current) => ({
+                                  ...current,
+                                  querySteps: current.querySteps.filter(
+                                    (candidate) => candidate.id !== step.id,
+                                  ),
+                                }))
+                              }
+                            >
+                              <Trash2 />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    {!report.querySteps.some(
+                      (step) => step.tableId === activeTable.id,
+                    ) && <p className="empty-inline">No query steps yet.</p>}
+                  </div>
+                </section>
                 <section className="prep-panel">
                   <div className="panel-title">
                     <Settings2 />
@@ -1047,7 +1663,9 @@ export default function Home() {
                             onChange={(event) =>
                               setTransform(activeTable.id, field.name, {
                                 kind: event.target.value as
-                                  "date" | "number" | "text",
+                                  | 'date'
+                                  | 'number'
+                                  | 'text',
                               })
                             }
                           >
@@ -1071,13 +1689,13 @@ export default function Home() {
                                   trim: event.target.checked,
                                 })
                               }
-                            />{" "}
+                            />{' '}
                             Trim
                           </label>
                           <input
                             className="form-input h-7"
                             placeholder="Fill null"
-                            value={transform?.fillNull ?? ""}
+                            value={transform?.fillNull ?? ''}
                             disabled={!canEdit}
                             onChange={(event) =>
                               setTransform(activeTable.id, field.name, {
@@ -1085,6 +1703,19 @@ export default function Home() {
                               })
                             }
                           />
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={transform?.remove ?? false}
+                              disabled={!canEdit}
+                              onChange={(event) =>
+                                setTransform(activeTable.id, field.name, {
+                                  remove: event.target.checked,
+                                })
+                              }
+                            />{' '}
+                            Remove
+                          </label>
                         </div>
                       );
                     })}
@@ -1135,7 +1766,7 @@ export default function Home() {
                       {Math.min(
                         (dataPage + 1) * pageSize,
                         searchedRows.length,
-                      ).toLocaleString()}{" "}
+                      ).toLocaleString()}{' '}
                       of {searchedRows.length.toLocaleString()}
                     </span>
                     <div>
@@ -1164,7 +1795,7 @@ export default function Home() {
             </div>
           )}
 
-          {view === "model" && (
+          {view === 'model' && (
             <div className="model-page">
               <div className="page-toolbar">
                 <div>
@@ -1197,7 +1828,7 @@ export default function Home() {
                             inferFields(
                               report.tables.find((table) => table.id === id)
                                 ?.rows ?? [],
-                            )[0]?.name ?? "",
+                            )[0]?.name ?? '',
                         }));
                       }}
                     >
@@ -1238,7 +1869,7 @@ export default function Home() {
                             inferFields(
                               report.tables.find((table) => table.id === id)
                                 ?.rows ?? [],
-                            )[0]?.name ?? "",
+                            )[0]?.name ?? '',
                         }));
                       }}
                     >
@@ -1267,6 +1898,50 @@ export default function Home() {
                         </NativeSelectOption>
                       ))}
                     </NativeSelect>
+                    <NativeSelect
+                      aria-label="Relationship cardinality"
+                      value={relationDraft.cardinality}
+                      onChange={(event) =>
+                        setRelationDraft((draft) => ({
+                          ...draft,
+                          cardinality: event.target.value as NonNullable<
+                            Relationship['cardinality']
+                          >,
+                        }))
+                      }
+                    >
+                      <NativeSelectOption value="many-to-one">
+                        Many to one
+                      </NativeSelectOption>
+                      <NativeSelectOption value="one-to-many">
+                        One to many
+                      </NativeSelectOption>
+                      <NativeSelectOption value="one-to-one">
+                        One to one
+                      </NativeSelectOption>
+                      <NativeSelectOption value="many-to-many">
+                        Many to many
+                      </NativeSelectOption>
+                    </NativeSelect>
+                    <NativeSelect
+                      aria-label="Cross-filter direction"
+                      value={relationDraft.crossFilterDirection}
+                      onChange={(event) =>
+                        setRelationDraft((draft) => ({
+                          ...draft,
+                          crossFilterDirection: event.target.value as
+                            | 'single'
+                            | 'both',
+                        }))
+                      }
+                    >
+                      <NativeSelectOption value="single">
+                        Single direction
+                      </NativeSelectOption>
+                      <NativeSelectOption value="both">
+                        Both directions
+                      </NativeSelectOption>
+                    </NativeSelect>
                     <Button onClick={addRelationship} disabled={!canEdit}>
                       <Plus />
                       Relate
@@ -1286,7 +1961,9 @@ export default function Home() {
                             .{relation.leftField}
                           </strong>
                           <small>
-                            matches{" "}
+                            {relation.cardinality ?? 'many-to-one'} ·{' '}
+                            {relation.crossFilterDirection ?? 'single'} ·
+                            matches{' '}
                             {
                               report.tables.find(
                                 (table) => table.id === relation.rightTableId,
@@ -1295,6 +1972,28 @@ export default function Home() {
                             .{relation.rightField}
                           </small>
                         </span>
+                        <label className="relationship-active-toggle">
+                          <input
+                            type="checkbox"
+                            checked={relation.active ?? true}
+                            disabled={!canEdit}
+                            onChange={(event) =>
+                              updateReport((current) => ({
+                                ...current,
+                                relationships: current.relationships.map(
+                                  (candidate) =>
+                                    candidate.id === relation.id
+                                      ? {
+                                          ...candidate,
+                                          active: event.target.checked,
+                                        }
+                                      : candidate,
+                                ),
+                              }))
+                            }
+                          />
+                          Active
+                        </label>
                         {canEdit && (
                           <button
                             onClick={() =>
@@ -1408,7 +2107,7 @@ export default function Home() {
                     <div>
                       <strong>Model map</strong>
                       <small>
-                        {report.tables.length} tables ·{" "}
+                        {report.tables.length} tables ·{' '}
                         {report.relationships.length} relationships
                       </small>
                     </div>
@@ -1424,11 +2123,11 @@ export default function Home() {
                         {inferFields(table.rows).map((field) => (
                           <p key={field.name}>
                             <span>
-                              {field.kind === "number"
-                                ? "#"
-                                : field.kind === "date"
-                                  ? "◷"
-                                  : "Aa"}
+                              {field.kind === 'number'
+                                ? '#'
+                                : field.kind === 'date'
+                                  ? '◷'
+                                  : 'Aa'}
                             </span>
                             {field.name}
                           </p>
@@ -1450,7 +2149,7 @@ export default function Home() {
           )}
         </section>
 
-        {view === "dashboard" && (
+        {view === 'dashboard' && (
           <aside className="bi-inspector">
             <div className="inspector-heading">
               <PanelRight />
@@ -1458,11 +2157,69 @@ export default function Home() {
                 <strong>Visual inspector</strong>
                 <small>
                   {selectedWidget
-                    ? "Configure the selected visual"
-                    : "Select a visual"}
+                    ? 'Configure the selected visual'
+                    : 'Select a visual'}
                 </small>
               </div>
             </div>
+            {activePage && (
+              <div className="page-inspector-controls">
+                <label>
+                  Page name
+                  <input
+                    className="form-input"
+                    value={activePage.name}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      updateReport((current) => ({
+                        ...current,
+                        pages: current.pages.map((page) =>
+                          page.id === activePage.id
+                            ? { ...page, name: event.target.value }
+                            : page,
+                        ),
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Canvas
+                  <input
+                    type="color"
+                    value={activePage.background}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      updateReport((current) => ({
+                        ...current,
+                        pages: current.pages.map((page) =>
+                          page.id === activePage.id
+                            ? { ...page, background: event.target.value }
+                            : page,
+                        ),
+                      }))
+                    }
+                  />
+                </label>
+                <label className="page-hidden-toggle">
+                  <input
+                    type="checkbox"
+                    checked={activePage.hidden}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      updateReport((current) => ({
+                        ...current,
+                        pages: current.pages.map((page) =>
+                          page.id === activePage.id
+                            ? { ...page, hidden: event.target.checked }
+                            : page,
+                        ),
+                      }))
+                    }
+                  />
+                  Hide page from viewers
+                </label>
+              </div>
+            )}
             {selectedWidget ? (
               <div className="inspector-controls">
                 <label>
@@ -1492,6 +2249,7 @@ export default function Home() {
                         table,
                         materialized.get(table.id) ?? table.rows,
                         0,
+                        selectedWidget.pageId,
                       );
                       updateWidget(selectedWidget.id, {
                         tableId: table.id,
@@ -1518,13 +2276,26 @@ export default function Home() {
                       })
                     }
                   >
-                    {["bar", "line", "area", "pie", "kpi", "table"].map(
-                      (kind) => (
-                        <NativeSelectOption key={kind} value={kind}>
-                          {kind}
-                        </NativeSelectOption>
-                      ),
-                    )}
+                    {[
+                      'bar',
+                      'line',
+                      'area',
+                      'pie',
+                      'kpi',
+                      'table',
+                      'matrix',
+                      'scatter',
+                      'funnel',
+                      'waterfall',
+                      'treemap',
+                      'gauge',
+                      'combo',
+                      'slicer',
+                    ].map((kind) => (
+                      <NativeSelectOption key={kind} value={kind}>
+                        {kind}
+                      </NativeSelectOption>
+                    ))}
                   </NativeSelect>
                 </label>
                 <label>
@@ -1566,6 +2337,47 @@ export default function Home() {
                     </NativeSelectOption>
                   </NativeSelect>
                 </label>
+                {(selectedWidget.kind === 'combo' ||
+                  selectedWidget.kind === 'scatter') && (
+                  <label>
+                    Secondary measure
+                    <NativeSelect
+                      value={
+                        selectedWidget.secondaryMeasure ??
+                        selectedWidget.measure
+                      }
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        updateWidget(selectedWidget.id, {
+                          secondaryMeasure: event.target.value,
+                        })
+                      }
+                    >
+                      {selectedNumericFields.map((field) => (
+                        <NativeSelectOption key={field.name} value={field.name}>
+                          {field.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </label>
+                )}
+                {selectedWidget.kind === 'gauge' && (
+                  <label>
+                    Gauge target
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="1"
+                      value={selectedWidget.gaugeTarget ?? 1000000}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        updateWidget(selectedWidget.id, {
+                          gaugeTarget: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                )}
                 <div className="field-label">
                   <span>Aggregation</span>
                   <NativeSelect
@@ -1582,8 +2394,92 @@ export default function Home() {
                       Average
                     </NativeSelectOption>
                     <NativeSelectOption value="count">Count</NativeSelectOption>
+                    <NativeSelectOption value="minimum">
+                      Minimum
+                    </NativeSelectOption>
+                    <NativeSelectOption value="maximum">
+                      Maximum
+                    </NativeSelectOption>
+                    <NativeSelectOption value="distinct-count">
+                      Distinct count
+                    </NativeSelectOption>
                   </NativeSelect>
                 </div>
+                <div className="field-label">
+                  <span>Quick calculation</span>
+                  <NativeSelect
+                    value={selectedWidget.calculation ?? 'none'}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      updateWidget(selectedWidget.id, {
+                        calculation: event.target.value as
+                          | 'none'
+                          | 'running-total'
+                          | 'percent-of-total'
+                          | 'difference',
+                        numberFormat:
+                          event.target.value === 'percent-of-total'
+                            ? 'percent'
+                            : selectedWidget.numberFormat,
+                      })
+                    }
+                  >
+                    <NativeSelectOption value="none">None</NativeSelectOption>
+                    <NativeSelectOption value="running-total">
+                      Running total
+                    </NativeSelectOption>
+                    <NativeSelectOption value="percent-of-total">
+                      Percent of total
+                    </NativeSelectOption>
+                    <NativeSelectOption value="difference">
+                      Difference from previous
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </div>
+                <div className="field-label">
+                  <span>Sort by value</span>
+                  <NativeSelect
+                    value={selectedWidget.sortDirection ?? 'none'}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      updateWidget(selectedWidget.id, {
+                        sortDirection: event.target.value as
+                          | 'none'
+                          | 'ascending'
+                          | 'descending',
+                      })
+                    }
+                  >
+                    <NativeSelectOption value="none">
+                      Source order
+                    </NativeSelectOption>
+                    <NativeSelectOption value="ascending">
+                      Ascending
+                    </NativeSelectOption>
+                    <NativeSelectOption value="descending">
+                      Descending
+                    </NativeSelectOption>
+                  </NativeSelect>
+                </div>
+                <label>
+                  Top N
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="1"
+                    max="200"
+                    value={selectedWidget.topN ?? 20}
+                    disabled={!canEdit}
+                    onChange={(event) =>
+                      updateWidget(selectedWidget.id, {
+                        topN: Math.max(
+                          1,
+                          Math.min(200, Number(event.target.value)),
+                        ),
+                      })
+                    }
+                  />
+                </label>
                 <div className="field-label">
                   <span>Number format</span>
                   <NativeSelect
@@ -1661,6 +2557,19 @@ export default function Home() {
                       }
                     />
                     Cross-filter
+                  </label>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={selectedWidget.hidden ?? false}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        updateWidget(selectedWidget.id, {
+                          hidden: event.target.checked,
+                        })
+                      }
+                    />
+                    Hide visual
                   </label>
                 </div>
                 <div className="inspector-actions">
@@ -1745,7 +2654,7 @@ export default function Home() {
                   <div>
                     <strong>{saved.name}</strong>
                     <small>
-                      {saved.tableCount} tables · {saved.widgetCount} visuals ·{" "}
+                      {saved.tableCount} tables · {saved.widgetCount} visuals ·{' '}
                       {new Date(saved.updatedAt).toLocaleString()}
                     </small>
                   </div>
@@ -1755,9 +2664,10 @@ export default function Home() {
                     onClick={() =>
                       void loadReport(saved.id).then((loaded) => {
                         if (loaded) {
-                          setReport(loaded);
-                          setActiveTableId(loaded.tables[0]?.id ?? "");
-                          setSelectedWidgetId(loaded.widgets[0]?.id ?? "");
+                          replaceReport(loaded);
+                          setActiveTableId(loaded.tables[0]?.id ?? '');
+                          setSelectedWidgetId(loaded.widgets[0]?.id ?? '');
+                          setActivePageId(loaded.pages[0]?.id ?? '');
                           setShowLibrary(false);
                         }
                       })

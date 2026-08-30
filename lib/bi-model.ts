@@ -1,18 +1,19 @@
-import { Parser } from "expr-eval";
+import { Parser } from 'expr-eval';
 
 import {
   type DataRow,
   type Field,
   type FieldKind,
   inferFields,
-} from "./analytics";
+} from './analytics';
 import type {
   CalculatedField,
   ColumnTransform,
   DataTable,
+  QueryStep,
   Relationship,
   ReportFilter,
-} from "./bi-types";
+} from './bi-types';
 
 const parser = new Parser({
   operators: {
@@ -28,7 +29,7 @@ export function createId(prefix: string): string {
 }
 
 export function sanitizeTableName(name: string): string {
-  return name.replace(/\.[^.]+$/, "").trim() || "Untitled table";
+  return name.replace(/\.[^.]+$/, '').trim() || 'Untitled table';
 }
 
 export function makeTable({
@@ -36,9 +37,9 @@ export function makeTable({
   rows,
   sourceKind,
   sourceName,
-}: Omit<DataTable, "id" | "importedAt">): DataTable {
+}: Omit<DataTable, 'id' | 'importedAt'>): DataTable {
   return {
-    id: createId("table"),
+    id: createId('table'),
     name: sanitizeTableName(name),
     rows,
     sourceKind,
@@ -48,12 +49,12 @@ export function makeTable({
 }
 
 function coerce(value: DataRow[string], kind: FieldKind): DataRow[string] {
-  if (value === null || value === undefined || value === "") return null;
-  if (kind === "number") {
-    const numeric = Number(String(value).replaceAll(",", ""));
+  if (value === null || value === undefined || value === '') return null;
+  if (kind === 'number') {
+    const numeric = Number(String(value).replaceAll(',', ''));
     return Number.isFinite(numeric) ? numeric : null;
   }
-  if (kind === "date") {
+  if (kind === 'date') {
     const date = new Date(String(value));
     return Number.isNaN(date.getTime())
       ? null
@@ -74,15 +75,83 @@ export function applyTransforms(
   return rows.map((row) => {
     const next = { ...row };
     for (const transform of relevant) {
+      if (transform.remove) {
+        delete next[transform.field];
+        continue;
+      }
       let value = next[transform.field];
-      if (transform.trim && typeof value === "string") value = value.trim();
-      if ((value === null || value === "") && transform.fillNull) {
+      if (transform.trim && typeof value === 'string') value = value.trim();
+      if ((value === null || value === '') && transform.fillNull) {
         value = transform.fillNull;
       }
       next[transform.field] = coerce(value, transform.kind);
     }
     return next;
   });
+}
+
+function compareValues(left: DataRow[string], right: DataRow[string]): number {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    return leftNumber - rightNumber;
+  }
+  return String(left ?? '').localeCompare(String(right ?? ''), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+export function applyQuerySteps(
+  rows: DataRow[],
+  tableId: string,
+  steps: QueryStep[],
+): DataRow[] {
+  let result = rows;
+  for (const step of steps.filter(
+    (candidate) => candidate.tableId === tableId && candidate.enabled,
+  )) {
+    if (step.kind === 'filter') {
+      result = result.filter((row) => {
+        const cell = row[step.field];
+        const blank = cell === null || cell === undefined || cell === '';
+        if (step.operator === 'is-blank') return blank;
+        if (step.operator === 'not-blank') return !blank;
+        if (step.operator === 'contains') {
+          return String(cell ?? '')
+            .toLocaleLowerCase()
+            .includes(step.value.toLocaleLowerCase());
+        }
+        const comparison = compareValues(cell, step.value);
+        if (step.operator === 'not-equals') return comparison !== 0;
+        if (step.operator === 'greater-than') return comparison > 0;
+        if (step.operator === 'less-than') return comparison < 0;
+        return comparison === 0;
+      });
+    } else if (step.kind === 'sort') {
+      const direction = step.direction === 'ascending' ? 1 : -1;
+      result = [...result].sort(
+        (left, right) =>
+          compareValues(left[step.field], right[step.field]) * direction,
+      );
+    } else if (step.kind === 'remove-duplicates') {
+      const seen = new Set<string>();
+      result = result.filter((row) => {
+        const key = String(row[step.field] ?? '');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    } else if (step.kind === 'limit') {
+      result = result.slice(0, Math.max(0, step.count));
+    } else if (step.kind === 'add-index') {
+      result = result.map((row, index) => ({
+        ...row,
+        [step.name || 'Index']: step.start + index,
+      }));
+    }
+  }
+  return result;
 }
 
 function compileCalculatedField(field: CalculatedField) {
@@ -126,7 +195,7 @@ export function applyCalculatedFields(
         );
         const result = item.expression.evaluate(scope) as unknown;
         next[item.field.name] =
-          typeof result === "number" || typeof result === "string"
+          typeof result === 'number' || typeof result === 'string'
             ? result
             : null;
       } catch {
@@ -140,17 +209,17 @@ export function applyCalculatedFields(
 export function validateCalculatedExpression(
   expression: string,
 ): string | null {
-  if (!expression.trim()) return "Enter a formula.";
+  if (!expression.trim()) return 'Enter a formula.';
   try {
     compileCalculatedField({
-      id: "validation",
-      tableId: "validation",
-      name: "validation",
+      id: 'validation',
+      tableId: 'validation',
+      name: 'validation',
       expression,
     });
     return null;
   } catch (error) {
-    return error instanceof Error ? error.message : "Invalid formula.";
+    return error instanceof Error ? error.message : 'Invalid formula.';
   }
 }
 
@@ -160,24 +229,32 @@ export function materializeTable({
   relationships,
   calculatedFields,
   transforms,
+  querySteps = [],
 }: {
   tableId: string;
   tables: DataTable[];
   relationships: Relationship[];
   calculatedFields: CalculatedField[];
   transforms: ColumnTransform[];
+  querySteps?: QueryStep[];
 }): DataRow[] {
   const table = tables.find((candidate) => candidate.id === tableId);
   if (!table) return [];
   let rows = applyCalculatedFields(
-    applyTransforms(table.rows, table.id, transforms),
+    applyQuerySteps(
+      applyTransforms(table.rows, table.id, transforms),
+      table.id,
+      querySteps,
+    ),
     table.id,
     calculatedFields,
   );
   const direct = relationships.filter(
     (relationship) =>
-      relationship.leftTableId === tableId ||
-      relationship.rightTableId === tableId,
+      relationship.active !== false &&
+      (relationship.leftTableId === tableId ||
+        (relationship.crossFilterDirection === 'both' &&
+          relationship.rightTableId === tableId)),
   );
   for (const relation of direct) {
     const baseIsLeft = relation.leftTableId === tableId;
@@ -187,25 +264,33 @@ export function materializeTable({
     const other = tables.find((candidate) => candidate.id === otherId);
     if (!other) continue;
     const otherRows = applyCalculatedFields(
-      applyTransforms(other.rows, other.id, transforms),
+      applyQuerySteps(
+        applyTransforms(other.rows, other.id, transforms),
+        other.id,
+        querySteps,
+      ),
       other.id,
       calculatedFields,
     );
-    const index = new Map<string, DataRow>();
+    const index = new Map<string, DataRow[]>();
     for (const row of otherRows) {
-      const key = String(row[otherField] ?? "");
-      if (!index.has(key)) index.set(key, row);
+      const key = String(row[otherField] ?? '');
+      index.set(key, [...(index.get(key) ?? []), row]);
     }
-    rows = rows.map((row) => {
-      const match = index.get(String(row[baseField] ?? ""));
-      if (!match) return row;
-      const additions = Object.fromEntries(
-        Object.entries(match).map(([field, value]) => [
-          `${other.name}.${field}`,
-          value,
-        ]),
-      );
-      return { ...row, ...additions };
+    rows = rows.flatMap((row) => {
+      const matches = index.get(String(row[baseField] ?? ''));
+      if (!matches?.length) return [row];
+      const selected =
+        relation.cardinality === 'many-to-many' ? matches : matches.slice(0, 1);
+      return selected.map((match) => {
+        const additions = Object.fromEntries(
+          Object.entries(match).map(([field, value]) => [
+            `${other.name}.${field}`,
+            value,
+          ]),
+        );
+        return { ...row, ...additions };
+      });
     });
   }
   return rows;
@@ -229,34 +314,34 @@ export function filterRows(
         filter.tableId === tableId
           ? filter.field
           : `${source?.name}.${filter.field}`;
-      return String(row[key] ?? "Blank") === filter.value;
+      return String(row[key] ?? 'Blank') === filter.value;
     }),
   );
 }
 
 export function validateRelationship(
-  relationship: Omit<Relationship, "id">,
+  relationship: Omit<Relationship, 'id'>,
   tables: DataTable[],
 ): string | null {
   if (relationship.leftTableId === relationship.rightTableId) {
-    return "Choose two different tables.";
+    return 'Choose two different tables.';
   }
   const left = tables.find((table) => table.id === relationship.leftTableId);
   const right = tables.find((table) => table.id === relationship.rightTableId);
-  if (!left || !right) return "A selected table no longer exists.";
+  if (!left || !right) return 'A selected table no longer exists.';
   if (
     !inferFields(left.rows).some(
       (field) => field.name === relationship.leftField,
     )
   ) {
-    return "The left key does not exist.";
+    return 'The left key does not exist.';
   }
   if (
     !inferFields(right.rows).some(
       (field) => field.name === relationship.rightField,
     )
   ) {
-    return "The right key does not exist.";
+    return 'The right key does not exist.';
   }
   return null;
 }

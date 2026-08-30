@@ -1,9 +1,35 @@
-import type { Aggregation, DataRow, FieldKind } from "./analytics";
+import type {
+  Aggregation,
+  DataRow,
+  FieldKind,
+  QuickCalculation,
+} from './analytics';
 
-export type SourceKind = "sample" | "csv" | "json" | "excel" | "sqlite";
-export type ChartKind = "bar" | "line" | "area" | "pie" | "kpi" | "table";
-export type ReportRole = "owner" | "editor" | "viewer";
-export type NumberFormat = "compact" | "standard" | "currency" | "percent";
+export type SourceKind = 'sample' | 'csv' | 'json' | 'xml' | 'excel' | 'sqlite';
+export type ChartKind =
+  | 'bar'
+  | 'line'
+  | 'area'
+  | 'pie'
+  | 'kpi'
+  | 'table'
+  | 'matrix'
+  | 'scatter'
+  | 'funnel'
+  | 'waterfall'
+  | 'treemap'
+  | 'gauge'
+  | 'combo'
+  | 'slicer';
+export type ReportRole = 'owner' | 'editor' | 'viewer';
+export type NumberFormat = 'compact' | 'standard' | 'currency' | 'percent';
+export type SortDirection = 'none' | 'ascending' | 'descending';
+export type RelationshipCardinality =
+  | 'one-to-one'
+  | 'one-to-many'
+  | 'many-to-one'
+  | 'many-to-many';
+export type CrossFilterDirection = 'single' | 'both';
 
 export type DataTable = {
   id: string;
@@ -21,6 +47,9 @@ export type Relationship = {
   leftField: string;
   rightTableId: string;
   rightField: string;
+  cardinality?: RelationshipCardinality;
+  crossFilterDirection?: CrossFilterDirection;
+  active?: boolean;
 };
 
 export type CalculatedField = {
@@ -37,6 +66,35 @@ export type ColumnTransform = {
   kind: FieldKind;
   trim: boolean;
   fillNull: string;
+  remove?: boolean;
+};
+
+export type QueryStepKind =
+  | 'filter'
+  | 'sort'
+  | 'remove-duplicates'
+  | 'limit'
+  | 'add-index';
+export type QueryOperator =
+  | 'equals'
+  | 'not-equals'
+  | 'contains'
+  | 'greater-than'
+  | 'less-than'
+  | 'is-blank'
+  | 'not-blank';
+export type QueryStep = {
+  id: string;
+  tableId: string;
+  kind: QueryStepKind;
+  field: string;
+  operator: QueryOperator;
+  value: string;
+  direction: 'ascending' | 'descending';
+  count: number;
+  name: string;
+  start: number;
+  enabled: boolean;
 };
 
 export type ReportFilter = {
@@ -56,32 +114,66 @@ export type WidgetLayout = {
 
 export type ChartWidget = {
   id: string;
+  pageId: string;
   title: string;
   tableId: string;
   kind: ChartKind;
   dimension: string;
   measure: string;
+  secondaryMeasure?: string;
+  gaugeTarget?: number;
   aggregation: Aggregation;
+  calculation?: QuickCalculation;
   color: string;
   showGrid: boolean;
   showLegend: boolean;
   numberFormat: NumberFormat;
   interactions: boolean;
+  sortDirection?: SortDirection;
+  topN?: number;
+  hidden?: boolean;
   layout: WidgetLayout;
 };
 
+export type ReportPage = {
+  id: string;
+  name: string;
+  hidden: boolean;
+  background: string;
+};
+
+export type ReportBookmark = {
+  id: string;
+  name: string;
+  pageId: string;
+  filters: ReportFilter[];
+  hiddenWidgetIds: string[];
+  createdAt: string;
+};
+
+export type ReportTheme = {
+  id: 'ocean' | 'executive' | 'forest' | 'sunset' | 'mono';
+  name: string;
+  palette: string[];
+  canvas: string;
+};
+
 export type ReportDocument = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
   role: ReportRole;
   refreshSeconds: number;
+  pages: ReportPage[];
+  bookmarks: ReportBookmark[];
+  theme: ReportTheme;
   tables: DataTable[];
   relationships: Relationship[];
   calculatedFields: CalculatedField[];
   transforms: ColumnTransform[];
+  querySteps: QueryStep[];
   filters: ReportFilter[];
   widgets: ChartWidget[];
 };

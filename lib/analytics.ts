@@ -1,6 +1,17 @@
 export type DataRow = Record<string, string | number | null>;
 export type FieldKind = 'date' | 'number' | 'text';
-export type Aggregation = 'sum' | 'average' | 'count';
+export type Aggregation =
+  | 'sum'
+  | 'average'
+  | 'count'
+  | 'minimum'
+  | 'maximum'
+  | 'distinct-count';
+export type QuickCalculation =
+  | 'none'
+  | 'running-total'
+  | 'percent-of-total'
+  | 'difference';
 
 export type Field = {
   name: string;
@@ -44,9 +55,13 @@ export function inferFields(rows: DataRow[]): Field[] {
   return names.map((name) => {
     const values = rows
       .map((row) => row[name])
-      .filter((value): value is string | number => value !== null && value !== undefined);
+      .filter(
+        (value): value is string | number =>
+          value !== null && value !== undefined,
+      );
     const numericRatio = values.length
-      ? values.filter((value) => typeof value === 'number').length / values.length
+      ? values.filter((value) => typeof value === 'number').length /
+        values.length
       : 0;
     const dateRatio = values.length
       ? values.filter(
@@ -105,9 +120,15 @@ export function aggregateRows({
     value:
       aggregation === 'count'
         ? values.length
-        : aggregation === 'average'
-          ? values.reduce((sum, value) => sum + value, 0) / values.length
-          : values.reduce((sum, value) => sum + value, 0),
+        : aggregation === 'distinct-count'
+          ? new Set(values).size
+          : aggregation === 'average'
+            ? values.reduce((sum, value) => sum + value, 0) / values.length
+            : aggregation === 'minimum'
+              ? Math.min(...values)
+              : aggregation === 'maximum'
+                ? Math.max(...values)
+                : values.reduce((sum, value) => sum + value, 0),
   }));
   if (dimensionKind === 'date') {
     const monthIndex = (label: string) => {
@@ -117,6 +138,28 @@ export function aggregateRows({
     return points.sort((a, b) => monthIndex(a.label) - monthIndex(b.label));
   }
   return points.sort((a, b) => b.value - a.value).slice(0, 18);
+}
+
+export function applyQuickCalculation(
+  points: AggregatedPoint[],
+  calculation: QuickCalculation = 'none',
+): AggregatedPoint[] {
+  if (calculation === 'none') return points;
+  if (calculation === 'percent-of-total') {
+    const total = points.reduce((sum, point) => sum + point.value, 0);
+    return points.map((point) => ({
+      ...point,
+      value: total ? point.value / total : 0,
+    }));
+  }
+  if (calculation === 'running-total') {
+    let total = 0;
+    return points.map((point) => ({ ...point, value: (total += point.value) }));
+  }
+  return points.map((point, index) => ({
+    ...point,
+    value: index ? point.value - points[index - 1].value : 0,
+  }));
 }
 
 export function summarize(rows: DataRow[], measure: string) {

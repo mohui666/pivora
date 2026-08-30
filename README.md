@@ -28,18 +28,18 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 
 ## Highlights
 
-|     | Capability               | What it gives you                                                                   |
-| --- | ------------------------ | ----------------------------------------------------------------------------------- |
-| 📥  | **Multi-format import**  | CSV, JSON, Excel (`.xlsx`, `.xls`, `.xlsm`), and SQLite (`.db`, `.sqlite`)          |
-| 🧹  | **Data preparation**     | Type overrides, text trimming, blank-value filling, search, and paginated previews  |
-| 🧩  | **Semantic modeling**    | Multiple tables, lookup relationships, and reusable calculated fields               |
-| 📊  | **Visual authoring**     | Bar, line, area, donut, KPI, and table visuals with per-chart formatting            |
-| ✨  | **Interactive canvas**   | Drag, resize, duplicate, delete, and cross-filter visual cards                      |
-| 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                      |
-| 📦  | **Portable output**      | Import/export `.llbi` report bundles and export dashboards as PNG or PDF            |
-| 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals         |
-| 👥  | **Workflow roles**       | Owner, Editor, and Viewer modes for previewing report workflows                     |
-| 🌗  | **Refined UI**           | Responsive layout, dark mode, accessible controls, and a ready-to-use sample report |
+|     | Capability               | What it gives you                                                                                 |
+| --- | ------------------------ | ------------------------------------------------------------------------------------------------- |
+| 📥  | **Multi-format import**  | CSV, JSON, XML, Excel (`.xlsx`, `.xls`, `.xlsm`), and SQLite (`.db`, `.sqlite`)                   |
+| 🧹  | **Data preparation**     | Ordered query steps, type overrides, trimming, null filling, column removal, search, and previews |
+| 🧩  | **Semantic modeling**    | Cardinality-aware relationships, filter direction, calculated fields, and quick calculations      |
+| 📊  | **Visual authoring**     | 14 visual types, secondary measures, sorting, Top N, formatting, and cross-filtering              |
+| ✨  | **Report authoring**     | Multi-page canvas, drag/resize, themes, bookmarks, hidden pages/visuals, undo, and redo           |
+| 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                    |
+| 📦  | **Portable output**      | Import/export `.llbi` report bundles and export dashboards as PNG or PDF                          |
+| 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals                       |
+| 👥  | **Workflow roles**       | Owner, Editor, and Viewer modes for previewing report workflows                                   |
+| 🌗  | **Refined UI**           | Responsive layout, dark mode, accessible controls, and a ready-to-use sample report               |
 
 ## See the workflow
 
@@ -47,8 +47,8 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 flowchart LR
     A[Local files] --> B[Import and normalize]
     B --> C[Clean and model]
-    C --> D[Calculated fields]
-    D --> E[Interactive dashboard]
+    C --> D[Query steps and formulas]
+    D --> E[Multi-page report]
     E --> F[Cross-filter]
     E --> G[PNG / PDF]
     E --> H[Portable .llbi bundle]
@@ -92,22 +92,25 @@ No Sites binding, hosted service, or external database is required.
 ## Build your first report
 
 1. Select **Import** and choose one or more supported local files.
-2. Open **Data & clean** to inspect fields, override types, trim text, or fill blanks.
-3. Open **Model** to relate tables or add formulas such as `[revenue] - [cost]`.
-4. Return to **Dashboard**, add visuals, and configure each chart in the inspector.
-5. Click a chart value to cross-filter related visuals.
-6. Save locally, export a portable `.llbi` bundle, or render the dashboard to PNG/PDF.
+2. Open **Data & clean** to build an ordered filter/sort/deduplicate/limit/index pipeline and clean columns non-destructively.
+3. Open **Model** to define cardinality, cross-filter direction, active relationships, or formulas such as `[revenue] - [cost]`.
+4. Return to **Dashboard**, create pages, add visuals, and configure aggregations or quick calculations in the inspector.
+5. Click a chart value to cross-filter related visuals; capture the result as a bookmark when useful.
+6. Apply a report theme, undo/redo edits, save locally, export a portable `.llbi` bundle, or render the active page to PNG/PDF.
 
 ## Data model
 
 LocalLens uses a deliberately compact semantic layer:
 
 - **Tables** preserve normalized local rows and their source metadata.
-- **Transforms** are non-destructive instructions applied during materialization.
-- **Relationships** provide direct lookup joins between two table keys.
+- **Query steps** form an ordered non-destructive pipeline: filter, sort, remove duplicates, keep first rows, and add index.
+- **Transforms** override types, trim strings, fill blanks, or exclude columns during materialization.
+- **Relationships** support one-to-one, one-to-many, many-to-one, and many-to-many cardinalities, active state, and single/bidirectional filtering.
 - **Calculated fields** use bracketed column references and a safe expression evaluator.
+- **Aggregations** include sum, average, count, distinct count, minimum, and maximum, followed by optional running total, percent-of-total, or previous-period difference.
 - **Filters** can flow from a visual to fields exposed through related tables.
-- **Widgets** store both query configuration and responsive grid layout.
+- **Pages, bookmarks, and themes** capture presentation state without changing source data.
+- **Widgets** store query configuration, visibility, formatting, interactions, and responsive grid layout.
 
 Example calculated fields:
 
@@ -125,15 +128,19 @@ Browser
 │   ├── Papa Parse        → CSV
 │   ├── SheetJS           → Excel
 │   ├── JSON parser       → JSON collections
+│   ├── DOM parser        → XML collections
 │   └── sql.js + WASM     → SQLite
 ├── Local semantic engine
 │   ├── transforms
+│   ├── ordered query steps
 │   ├── relationships
 │   ├── calculated fields
+│   ├── quick calculations
 │   └── cross-filters
 ├── React analytics studio
 │   ├── responsive grid canvas
-│   ├── Recharts visuals
+│   ├── 14 Recharts/CSS visuals
+│   ├── pages, bookmarks, and themes
 │   └── visual inspector
 └── Local persistence
     ├── IndexedDB report library
@@ -149,7 +156,8 @@ Browser
 | [`lib/data-import.ts`](./lib/data-import.ts)                         | File adapters and row normalization                                |
 | [`lib/bi-model.ts`](./lib/bi-model.ts)                               | Transforms, formulas, relationships, materialization, and filters  |
 | [`lib/report-storage.ts`](./lib/report-storage.ts)                   | IndexedDB persistence and report library                           |
-| [`components/bi/chart-visual.tsx`](./components/bi/chart-visual.tsx) | Six visual types and interaction handling                          |
+| [`lib/report-schema.ts`](./lib/report-schema.ts)                     | Backward-compatible report upgrades and built-in themes            |
+| [`components/bi/chart-visual.tsx`](./components/bi/chart-visual.tsx) | Fourteen visual types and interaction handling                     |
 | [`lib/sample-report.ts`](./lib/sample-report.ts)                     | Complete sample dataset, model, and dashboard                      |
 
 ## Privacy and security model
@@ -181,24 +189,29 @@ The current suite covers the core analytics and import paths with Node's native 
 
 ## Current scope
 
-LocalLens BI is a complete local authoring vertical slice, not a clone of every enterprise BI feature.
+LocalLens BI is a capable local report authoring application, not a binary-compatible clone of Power BI or its cloud service.
 
 - The formula language is intentionally smaller than DAX.
-- Relationships are direct lookup joins rather than a general-purpose query planner.
+- Query steps cover common file-preparation workflows but do not execute Power Query M.
+- Relationships are materialized in-browser rather than executed by a distributed query planner.
 - Roles do not provide cryptographic access control.
 - Collaboration uses portable bundles instead of a real-time server.
 - Scheduled refresh works with browser-authorized local file handles.
+- Power BI Service-only features such as Microsoft tenant workspaces, gateways, Fabric, and Azure-managed deployment are outside the local-only trust boundary.
 
 These constraints keep the project private-by-default, understandable, and easy to run.
 
 ## Roadmap
 
+- [x] Multi-page reports, bookmarks, themes, and undo/redo
+- [x] Matrix, scatter, funnel, waterfall, treemap, gauge, combo, and slicer visuals
+- [x] Ordered query steps and extended/quick calculations
 - [ ] Lazy-load heavy import/export adapters for a smaller initial bundle
-- [ ] Add pivot tables and scatter plots
-- [ ] Add reusable report themes and dashboard templates
 - [ ] Add relationship cardinality diagnostics
+- [ ] Add drill hierarchies, conditional formatting, and multi-page PDF export
 - [ ] Add optional DuckDB-WASM support for larger analytical workloads
-- [ ] Add end-to-end browser tests for import, authoring, and export flows
+- [ ] Add Parquet, folder, and opt-in web/API connectors
+- [ ] Add repeatable end-to-end browser tests for import, authoring, and export flows
 - [ ] Add internationalization
 
 ## Contributing

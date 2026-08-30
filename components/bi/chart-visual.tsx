@@ -1,55 +1,60 @@
-"use client";
+'use client';
 
-import { Database } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { Database } from 'lucide-react';
+import { useSyncExternalStore } from 'react';
 import {
   Area,
   AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
+  Treemap,
   XAxis,
   YAxis,
-} from "recharts";
+} from 'recharts';
 
-import type { AggregatedPoint } from "@/lib/analytics";
-import type { ChartWidget, NumberFormat } from "@/lib/bi-types";
+import type { AggregatedPoint } from '@/lib/analytics';
+import type { ChartWidget, NumberFormat } from '@/lib/bi-types';
 
 const PIE_COLORS = [
-  "#4f6df5",
-  "#22b8a7",
-  "#f2a43a",
-  "#8b62e8",
-  "#ef6a68",
-  "#5c8dff",
+  '#4f6df5',
+  '#22b8a7',
+  '#f2a43a',
+  '#8b62e8',
+  '#ef6a68',
+  '#5c8dff',
 ];
 
 const subscribeToHydration = () => () => {};
 
 export function formatVisualValue(value: number, format: NumberFormat): string {
-  if (format === "currency") {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      notation: Math.abs(value) >= 100_000 ? "compact" : "standard",
+  if (format === 'currency') {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      notation: Math.abs(value) >= 100_000 ? 'compact' : 'standard',
       maximumFractionDigits: 1,
     }).format(value);
   }
-  if (format === "percent") {
-    return new Intl.NumberFormat("en-US", {
-      style: "percent",
+  if (format === 'percent') {
+    return new Intl.NumberFormat('en-US', {
+      style: 'percent',
       maximumFractionDigits: 1,
     }).format(value / 100);
   }
-  return new Intl.NumberFormat("en-US", {
-    notation: format === "compact" ? "compact" : "standard",
+  return new Intl.NumberFormat('en-US', {
+    notation: format === 'compact' ? 'compact' : 'standard',
     maximumFractionDigits: 2,
   }).format(value);
 }
@@ -57,10 +62,12 @@ export function formatVisualValue(value: number, format: NumberFormat): string {
 export function ChartVisual({
   widget,
   points,
+  secondaryPoints,
   onPointClick,
 }: {
   widget: ChartWidget;
   points: AggregatedPoint[];
+  secondaryPoints?: AggregatedPoint[];
   onPointClick?: (label: string) => void;
 }) {
   const hydrated = useSyncExternalStore(
@@ -84,7 +91,7 @@ export function ChartVisual({
       </div>
     );
   }
-  if (widget.kind === "kpi") {
+  if (widget.kind === 'kpi') {
     return (
       <div className="flex h-full flex-col justify-center px-2">
         <strong
@@ -99,7 +106,68 @@ export function ChartVisual({
       </div>
     );
   }
-  if (widget.kind === "table") {
+  if (widget.kind === 'gauge') {
+    const target = Math.max(widget.gaugeTarget ?? total * 1.2, 1);
+    const ratio = Math.max(0, Math.min(1, total / target));
+    return (
+      <div className="gauge-visual">
+        <div
+          className="gauge-ring"
+          style={{
+            background: `conic-gradient(${widget.color} ${ratio * 270}deg, var(--muted) 0deg 270deg, transparent 270deg)`,
+          }}
+        >
+          <div>
+            <strong>{formatVisualValue(total, widget.numberFormat)}</strong>
+            <small>{Math.round(ratio * 100)}% of target</small>
+          </div>
+        </div>
+        <p>Target {formatVisualValue(target, widget.numberFormat)}</p>
+      </div>
+    );
+  }
+  if (widget.kind === 'slicer') {
+    return (
+      <div className="slicer-visual">
+        {points.map((point) => (
+          <button key={point.label} onClick={() => onPointClick?.(point.label)}>
+            <span>{point.label}</span>
+            <strong>
+              {formatVisualValue(point.value, widget.numberFormat)}
+            </strong>
+          </button>
+        ))}
+      </div>
+    );
+  }
+  if (widget.kind === 'funnel') {
+    const maximum = Math.max(
+      ...points.map((point) => Math.abs(point.value)),
+      1,
+    );
+    return (
+      <div className="funnel-visual">
+        {points.map((point, index) => (
+          <button key={point.label} onClick={() => onPointClick?.(point.label)}>
+            <span>{point.label}</span>
+            <i
+              style={{
+                width: `${Math.max(14, (Math.abs(point.value) / maximum) * 100)}%`,
+                background:
+                  index === 0
+                    ? widget.color
+                    : PIE_COLORS[index % PIE_COLORS.length],
+              }}
+            />
+            <strong>
+              {formatVisualValue(point.value, widget.numberFormat)}
+            </strong>
+          </button>
+        ))}
+      </div>
+    );
+  }
+  if (widget.kind === 'table' || widget.kind === 'matrix') {
     return (
       <div className="h-full overflow-auto rounded-lg border">
         <table className="visual-table">
@@ -107,6 +175,7 @@ export function ChartVisual({
             <tr>
               <th>{widget.dimension}</th>
               <th>{widget.measure}</th>
+              {widget.kind === 'matrix' && <th>Share</th>}
             </tr>
           </thead>
           <tbody>
@@ -114,6 +183,13 @@ export function ChartVisual({
               <tr key={point.label} onClick={() => onPointClick?.(point.label)}>
                 <td>{point.label}</td>
                 <td>{formatVisualValue(point.value, widget.numberFormat)}</td>
+                {widget.kind === 'matrix' && (
+                  <td>
+                    {total
+                      ? `${((point.value / total) * 100).toFixed(1)}%`
+                      : '0%'}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -126,10 +202,10 @@ export function ChartVisual({
     <Tooltip
       contentStyle={{
         borderRadius: 10,
-        borderColor: "var(--border)",
-        background: "var(--card)",
+        borderColor: 'var(--border)',
+        background: 'var(--card)',
       }}
-      cursor={{ fill: "var(--muted)" }}
+      cursor={{ fill: 'var(--muted)' }}
       formatter={(value) => [
         formatVisualValue(Number(value), widget.numberFormat),
         widget.measure,
@@ -149,14 +225,14 @@ export function ChartVisual({
         dataKey="label"
         axisLine={false}
         tickLine={false}
-        tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
+        tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }}
         minTickGap={18}
       />
       <YAxis
         axisLine={false}
         tickLine={false}
         width={56}
-        tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
+        tick={{ fill: 'var(--muted-foreground)', fontSize: 10 }}
         tickFormatter={(value) =>
           formatVisualValue(Number(value), widget.numberFormat)
         }
@@ -168,7 +244,120 @@ export function ChartVisual({
       onPointClick?.(String(state.activeLabel));
   };
 
-  if (widget.kind === "pie") {
+  if (widget.kind === 'treemap') {
+    return (
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+        minWidth={0}
+        minHeight={0}
+        initialDimension={{ width: 1, height: 1 }}
+      >
+        <Treemap
+          data={points}
+          dataKey="value"
+          nameKey="label"
+          fill={widget.color}
+          stroke="var(--card)"
+          onClick={(node) => onPointClick?.(node.name)}
+        >
+          {tooltip}
+        </Treemap>
+      </ResponsiveContainer>
+    );
+  }
+  if (widget.kind === 'scatter') {
+    const secondary = new Map(
+      (secondaryPoints ?? []).map((point) => [point.label, point.value]),
+    );
+    const data = points.map((point, index) => ({
+      label: point.label,
+      x: secondary.get(point.label) ?? index + 1,
+      y: point.value,
+    }));
+    return (
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+        minWidth={0}
+        minHeight={0}
+        initialDimension={{ width: 1, height: 1 }}
+      >
+        <ScatterChart margin={{ top: 8, right: 12, bottom: 8, left: 0 }}>
+          {widget.showGrid && (
+            <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" />
+          )}
+          <XAxis type="number" dataKey="x" tick={{ fontSize: 10 }} />
+          <YAxis type="number" dataKey="y" tick={{ fontSize: 10 }} />
+          <Tooltip cursor={{ strokeDasharray: '3 3' }} />
+          <Scatter
+            data={data}
+            fill={widget.color}
+            onClick={(_, index) => onPointClick?.(data[index]?.label ?? '')}
+          />
+        </ScatterChart>
+      </ResponsiveContainer>
+    );
+  }
+  if (widget.kind === 'combo') {
+    const secondary = new Map(
+      (secondaryPoints ?? []).map((point) => [point.label, point.value]),
+    );
+    const data = points.map((point) => ({
+      ...point,
+      secondary: secondary.get(point.label) ?? point.value,
+    }));
+    return (
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+        minWidth={0}
+        minHeight={0}
+        initialDimension={{ width: 1, height: 1 }}
+      >
+        <ComposedChart
+          data={data}
+          margin={{ top: 8, right: 12, left: 0 }}
+          onClick={clickFromState}
+        >
+          {axes}
+          {tooltip}
+          <Bar dataKey="value" fill={widget.color} radius={[4, 4, 0, 0]} />
+          <Line
+            type="monotone"
+            dataKey="secondary"
+            stroke="#e85d3f"
+            strokeWidth={3}
+          />
+          {widget.showLegend && <Legend />}
+        </ComposedChart>
+      </ResponsiveContainer>
+    );
+  }
+  if (widget.kind === 'waterfall') {
+    return (
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+        minWidth={0}
+        minHeight={0}
+        initialDimension={{ width: 1, height: 1 }}
+      >
+        <BarChart
+          data={points}
+          margin={{ top: 8, right: 12, left: 0 }}
+          onClick={clickFromState}
+        >
+          {axes}
+          {tooltip}
+          <ReferenceLine y={0} stroke="var(--foreground)" opacity={0.3} />
+          <Bar dataKey="value" fill={widget.color} radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+
+  if (widget.kind === 'pie') {
     const pieData = points.map((point, index) => ({
       ...point,
       fill: index === 0 ? widget.color : PIE_COLORS[index % PIE_COLORS.length],
@@ -179,6 +368,7 @@ export function ChartVisual({
         height="100%"
         minWidth={0}
         minHeight={0}
+        initialDimension={{ width: 1, height: 1 }}
       >
         <PieChart>
           {tooltip}
@@ -192,19 +382,20 @@ export function ChartVisual({
             innerRadius="42%"
             outerRadius="72%"
             paddingAngle={2}
-            onClick={(_, index) => onPointClick?.(points[index]?.label ?? "")}
+            onClick={(_, index) => onPointClick?.(points[index]?.label ?? '')}
           />
         </PieChart>
       </ResponsiveContainer>
     );
   }
-  if (widget.kind === "line") {
+  if (widget.kind === 'line') {
     return (
       <ResponsiveContainer
         width="100%"
         height="100%"
         minWidth={0}
         minHeight={0}
+        initialDimension={{ width: 1, height: 1 }}
       >
         <LineChart
           data={points}
@@ -226,7 +417,7 @@ export function ChartVisual({
       </ResponsiveContainer>
     );
   }
-  if (widget.kind === "area") {
+  if (widget.kind === 'area') {
     const gradientId = `fill-${widget.id}`;
     return (
       <ResponsiveContainer
@@ -234,6 +425,7 @@ export function ChartVisual({
         height="100%"
         minWidth={0}
         minHeight={0}
+        initialDimension={{ width: 1, height: 1 }}
       >
         <AreaChart
           data={points}
@@ -261,7 +453,13 @@ export function ChartVisual({
     );
   }
   return (
-    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+    <ResponsiveContainer
+      width="100%"
+      height="100%"
+      minWidth={0}
+      minHeight={0}
+      initialDimension={{ width: 1, height: 1 }}
+    >
       <BarChart
         data={points}
         margin={{ top: 8, right: 12, left: 0 }}

@@ -1,14 +1,15 @@
-import type { ReportDocument, ReportSummary } from "./bi-types";
+import type { ReportDocument, ReportSummary } from './bi-types';
+import { upgradeReport } from './report-schema';
 
-const DATABASE = "locallens-bi";
-const STORE = "reports";
+const DATABASE = 'locallens-bi';
+const STORE = 'reports';
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DATABASE, 1);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE)) {
-        request.result.createObjectStore(STORE, { keyPath: "id" });
+        request.result.createObjectStore(STORE, { keyPath: 'id' });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -19,7 +20,7 @@ function openDatabase(): Promise<IDBDatabase> {
 export async function saveReport(report: ReportDocument): Promise<void> {
   const database = await openDatabase();
   await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(STORE, "readwrite");
+    const transaction = database.transaction(STORE, 'readwrite');
     transaction.objectStore(STORE).put(report);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
@@ -36,7 +37,7 @@ export async function loadReport(id: string): Promise<ReportDocument | null> {
     request.onerror = () => reject(request.error);
   });
   database.close();
-  return report;
+  return report ? upgradeReport(report) : null;
 }
 
 export async function listReports(): Promise<ReportSummary[]> {
@@ -48,6 +49,7 @@ export async function listReports(): Promise<ReportSummary[]> {
   });
   database.close();
   return reports
+    .map((report) => upgradeReport(report))
     .map((report) => ({
       id: report.id,
       name: report.name,
@@ -61,7 +63,7 @@ export async function listReports(): Promise<ReportSummary[]> {
 export async function deleteReport(id: string): Promise<void> {
   const database = await openDatabase();
   await new Promise<void>((resolve, reject) => {
-    const transaction = database.transaction(STORE, "readwrite");
+    const transaction = database.transaction(STORE, 'readwrite');
     transaction.objectStore(STORE).delete(id);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
