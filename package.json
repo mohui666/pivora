@@ -18,7 +18,7 @@
     "desktop": "npm run build && npm run desktop:runtime && electron .",
     "desktop:runtime": "node scripts/prepare-desktop-runtime.mjs",
     "desktop:dir": "npm run build && npm run desktop:runtime && electron-builder --win --dir",
-    "desktop:dist": "npm run build && npm run desktop:runtime && electron-builder --win",
+    "desktop:dist": "npm run build && npm run desktop:runtime && electron-builder --win --publish never",
     "desktop:smoke": "node scripts/smoke-desktop.mjs",
     "test": "tsx --test lib/*.test.ts",
     "lint": "oxlint app lib desktop scripts components/bi components/ui/badge.tsx components/ui/button.tsx components/ui/input.tsx components/ui/native-select.tsx",
