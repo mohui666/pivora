@@ -140,13 +140,14 @@ const widgets: ChartWidget[] = [
 export function createSampleReport(): ReportDocument {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     id: createId('report'),
     name: 'Retail performance',
     createdAt: now,
     updatedAt: now,
     role: 'owner',
     refreshSeconds: 0,
+    layoutMode: 'snap',
     pages: [overviewPage],
     bookmarks: [],
     theme: REPORT_THEMES[0],

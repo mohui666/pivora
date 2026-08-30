@@ -31,6 +31,7 @@ export type ChartKind =
   | 'combo'
   | 'slicer';
 export type ReportRole = 'owner' | 'editor' | 'viewer';
+export type LayoutMode = 'snap' | 'free';
 export type NumberFormat = 'compact' | 'standard' | 'currency' | 'percent';
 export type SortDirection = 'none' | 'ascending' | 'descending';
 export type RelationshipCardinality =
@@ -265,13 +266,14 @@ export type ReportTheme = {
 };
 
 export type ReportDocument = {
-  schemaVersion: 7;
+  schemaVersion: 8;
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
   role: ReportRole;
   refreshSeconds: number;
+  layoutMode: LayoutMode;
   pages: ReportPage[];
   bookmarks: ReportBookmark[];
   theme: ReportTheme;

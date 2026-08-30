@@ -5,7 +5,8 @@ import { createBlankReport, REPORT_TEMPLATES } from './report-templates';
 
 void test('creates a complete empty report bundle for import-first work', () => {
   const report = createBlankReport();
-  assert.equal(report.schemaVersion, 7);
+  assert.equal(report.schemaVersion, 8);
+  assert.equal(report.layoutMode, 'snap');
   assert.equal(report.tables.length, 0);
   assert.equal(report.widgets.length, 0);
   assert.equal(report.pages.length, 1);

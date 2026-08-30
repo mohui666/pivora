@@ -51,8 +51,8 @@ import {
   useState,
 } from 'react';
 import ReactGridLayout, {
+  getCompactor,
   type Layout,
-  useContainerWidth,
   verticalCompactor,
 } from 'react-grid-layout';
 
@@ -91,6 +91,7 @@ import type {
   ColumnMetadata,
   ColumnTransform,
   DataTable,
+  LayoutMode,
   NumberFormat,
   QueryStep,
   Relationship,
@@ -105,6 +106,11 @@ import type {
   SemanticMeasure,
 } from '@/lib/bi-types';
 import { parseDataFile } from '@/lib/data-import';
+import {
+  convertWidgetLayoutMode,
+  DASHBOARD_GRID_MODES,
+  normalizeWidgetLayoutForMode,
+} from '@/lib/grid-layout';
 import { REPORT_THEMES, upgradeReport } from '@/lib/report-schema';
 import { REPORT_TEMPLATES } from '@/lib/report-templates';
 import {
@@ -129,6 +135,12 @@ type VisualPerformance = {
   outputPoints: number;
   measuredAt: string;
 };
+
+const FREE_PLACEMENT_COMPACTOR = getCompactor(
+  null,
+  DASHBOARD_GRID_MODES.free.allowOverlap,
+  DASHBOARD_GRID_MODES.free.preventCollision,
+);
 
 const AUTO_SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -172,7 +184,7 @@ function defaultWidget(
     color: '#4f6df5',
     showGrid: true,
     showLegend: false,
-    numberFormat: 'compact',
+    numberFormat: measure ? 'compact' : 'standard',
     interactions: true,
     layout: { x: 0, y, w: 6, h: 7 },
   };
@@ -372,11 +384,14 @@ export default function Home() {
   const dashboardRef = useRef<HTMLDivElement>(null);
   const lastAutoSnapshotAt = useRef(0);
   const fileHandles = useRef(new Map<string, LocalFileHandle>());
-  const {
-    width: gridWidth,
-    containerRef: gridContainerRef,
-    mounted: gridMounted,
-  } = useContainerWidth({ initialWidth: 1100 });
+  const [gridContainer, setGridContainer] = useState<HTMLDivElement | null>(
+    null,
+  );
+  const [gridWidth, setGridWidth] = useState(1100);
+  const gridContainerRef = useCallback((node: HTMLDivElement | null) => {
+    setGridContainer(node);
+  }, []);
+  const gridMounted = gridContainer !== null;
 
   const canEdit = storageReady && report.role !== 'viewer';
   const canManage = storageReady && report.role === 'owner';
@@ -394,6 +409,7 @@ export default function Home() {
   const pageWidgets = report.widgets.filter(
     (widget) => widget.pageId === activePage?.id && !widget.hidden,
   );
+  const dashboardGrid = DASHBOARD_GRID_MODES[report.layoutMode];
 
   const updateReport = useCallback(
     (updater: (current: ReportDocument) => ReportDocument) => {
@@ -409,6 +425,32 @@ export default function Home() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!gridContainer) return;
+    let frame = 0;
+    const measure = () => {
+      const nextWidth = Math.round(gridContainer.getBoundingClientRect().width);
+      if (nextWidth > 0) {
+        setGridWidth((current) =>
+          current === nextWidth ? current : nextWidth,
+        );
+      }
+    };
+    const queueMeasure = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(measure);
+    };
+    measure();
+    const observer = new ResizeObserver(queueMeasure);
+    observer.observe(gridContainer);
+    window.addEventListener('resize', queueMeasure);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener('resize', queueMeasure);
+    };
+  }, [gridContainer]);
 
   function replaceReport(next: ReportDocument) {
     setHistory({ past: [], present: upgradeReport(next), future: [] });
@@ -728,6 +770,35 @@ export default function Home() {
       ),
     [report.columnMetadata],
   );
+
+  function openDataTable(tableId: string) {
+    const table = report.tables.find((candidate) => candidate.id === tableId);
+    if (!table) return;
+    const fields = fieldsFor(tableId);
+    const firstField = fields[0]?.name ?? '';
+    const numericField =
+      fields.find((field) => field.kind === 'number')?.name ?? firstField;
+    const sourceTable = report.tables.find(
+      (candidate) => candidate.id !== tableId,
+    );
+
+    setActiveTableId(tableId);
+    setDataPage(0);
+    setDataSearch('');
+    setProfileField(numericField);
+    setMetadataSelection({ tableId, field: firstField });
+    setQueryDraft((draft) => ({
+      ...draft,
+      field: firstField,
+      targetField: numericField,
+      fields: numericField ? [numericField] : [],
+      sourceTableId: sourceTable?.id,
+      sourceField: sourceTable
+        ? (fieldsFor(sourceTable.id)[0]?.name ?? '')
+        : undefined,
+    }));
+    setView('data');
+  }
 
   const relationshipDiagnostics = useMemo(
     () =>
@@ -1295,7 +1366,15 @@ export default function Home() {
       const widgets = current.widgets.map((widget) => {
         const item = layout.find((candidate) => candidate.i === widget.id);
         if (!item) return widget;
-        const nextLayout = { x: item.x, y: item.y, w: item.w, h: item.h };
+        const nextLayout = normalizeWidgetLayoutForMode(
+          {
+            x: item.x,
+            y: item.y,
+            w: item.w,
+            h: item.h,
+          },
+          current.layoutMode,
+        );
         const same =
           widget.layout.x === nextLayout.x &&
           widget.layout.y === nextLayout.y &&
@@ -1307,6 +1386,27 @@ export default function Home() {
       });
       return changed ? { ...current, widgets } : current;
     });
+  }
+
+  function setLayoutMode(mode: LayoutMode) {
+    if (!canEdit || mode === report.layoutMode) return;
+    updateReport((current) => ({
+      ...current,
+      layoutMode: mode,
+      widgets: current.widgets.map((widget) => ({
+        ...widget,
+        layout: convertWidgetLayoutMode(
+          widget.layout,
+          current.layoutMode,
+          mode,
+        ),
+      })),
+    }));
+    showNotice(
+      mode === 'snap'
+        ? 'Auto snap enabled. Visuals compact to the grid.'
+        : 'Freeform enabled. Visuals stay where placed and may overlap.',
+    );
   }
 
   function setTransform(
@@ -2055,10 +2155,7 @@ export default function Home() {
               <button
                 key={table.id}
                 className={`table-source ${activeTable?.id === table.id ? 'active' : ''}`}
-                onClick={() => {
-                  setActiveTableId(table.id);
-                  setDataPage(0);
-                }}
+                onClick={() => openDataTable(table.id)}
               >
                 <span className="source-icon">
                   <Database />
@@ -2141,6 +2238,29 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <fieldset
+                    className="layout-mode-control"
+                    aria-label="Canvas layout mode"
+                  >
+                    <button
+                      type="button"
+                      aria-pressed={report.layoutMode === 'snap'}
+                      disabled={!canEdit}
+                      onClick={() => setLayoutMode('snap')}
+                      title="Align to a 12-column grid and compact gaps"
+                    >
+                      Auto snap
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={report.layoutMode === 'free'}
+                      disabled={!canEdit}
+                      onClick={() => setLayoutMode('free')}
+                      title="Place visuals freely, including on top of each other"
+                    >
+                      Freeform
+                    </button>
+                  </fieldset>
                   <Button
                     variant="outline"
                     size="sm"
@@ -2625,27 +2745,42 @@ export default function Home() {
                   )}
                   {gridMounted && (
                     <ReactGridLayout
+                      key={`${activePage?.id}:${report.layoutMode}`}
                       width={gridWidth}
                       layout={pageWidgets.map((widget) => ({
                         i: widget.id,
-                        ...widget.layout,
-                        minW: 3,
-                        minH: 3,
+                        ...normalizeWidgetLayoutForMode(
+                          widget.layout,
+                          report.layoutMode,
+                        ),
+                        minW: dashboardGrid.minimumWidth,
+                        minH: dashboardGrid.minimumHeight,
                       }))}
                       gridConfig={{
-                        cols: 12,
-                        rowHeight: 34,
-                        margin: [12, 12],
+                        cols: dashboardGrid.columns,
+                        rowHeight: dashboardGrid.rowHeight,
+                        margin: dashboardGrid.margin,
                         containerPadding: [0, 0],
                       }}
                       dragConfig={{
                         enabled: canEdit,
+                        bounded: true,
                         handle: '.drag-handle',
-                        cancel: 'button,input,select',
+                        cancel:
+                          '.visual-actions button,input,select,textarea,a',
+                        threshold: 4,
                       }}
                       resizeConfig={{ enabled: canEdit, handles: ['se'] }}
-                      compactor={verticalCompactor}
-                      onLayoutChange={updateLayout}
+                      compactor={
+                        report.layoutMode === 'snap'
+                          ? verticalCompactor
+                          : FREE_PLACEMENT_COMPACTOR
+                      }
+                      onDragStart={(_layout, _oldItem, item) => {
+                        if (item) setSelectedWidgetId(item.i);
+                      }}
+                      onDragStop={updateLayout}
+                      onResizeStop={updateLayout}
                     >
                       {pageWidgets.map((widget) => (
                         <article
@@ -2742,7 +2877,9 @@ export default function Home() {
                                 )?.name ||
                                 metadataFor(widget.tableId, widget.measure)
                                   ?.displayName ||
-                                widget.measure
+                                (widget.measure === '__rows'
+                                  ? 'Row count'
+                                  : widget.measure)
                               }
                               onPointClick={(value) =>
                                 applyVisualPoint(widget, value)
@@ -2770,6 +2907,19 @@ export default function Home() {
                   </p>
                 </div>
                 <div className="flex gap-2">
+                  <NativeSelect
+                    className="w-44"
+                    size="sm"
+                    aria-label="Active data table"
+                    value={activeTable.id}
+                    onChange={(event) => openDataTable(event.target.value)}
+                  >
+                    {report.tables.map((table) => (
+                      <NativeSelectOption key={table.id} value={table.id}>
+                        {table.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
                   <input
                     className="form-input w-52"
                     placeholder="Search values"
@@ -5423,6 +5573,7 @@ export default function Home() {
                 <label>
                   Table
                   <NativeSelect
+                    aria-label="Visual data table"
                     value={selectedWidget.tableId}
                     disabled={!canEdit}
                     onChange={(event) => {
@@ -5441,10 +5592,15 @@ export default function Home() {
                         tableId: table.id,
                         dimension: next.dimension,
                         measure: next.measure,
+                        aggregation: next.aggregation,
+                        secondaryMeasure: undefined,
+                        hierarchy: undefined,
+                        drillLevel: 0,
                         numberFormat:
                           metadataFor(table.id, next.measure)?.numberFormat ??
-                          selectedWidget.numberFormat,
+                          next.numberFormat,
                       });
+                      setActiveTableId(table.id);
                     }}
                   >
                     {report.tables.map((table) => (

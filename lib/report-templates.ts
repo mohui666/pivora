@@ -45,13 +45,14 @@ export function createBlankReport(): ReportDocument {
   const now = new Date().toISOString();
   const theme = REPORT_THEMES[0];
   return {
-    schemaVersion: 7,
+    schemaVersion: 8,
     id: createId('report'),
     name: 'Untitled report',
     createdAt: now,
     updatedAt: now,
     role: 'owner',
     refreshSeconds: 0,
+    layoutMode: 'snap',
     pages: [
       {
         id: createId('page'),

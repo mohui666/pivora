@@ -7,6 +7,7 @@ import type {
   RoleRule,
   ReportTheme,
 } from './bi-types';
+import { normalizeWidgetLayoutForMode } from './grid-layout';
 
 export const REPORT_THEMES: ReportTheme[] = [
   {
@@ -65,8 +66,9 @@ type LegacyReport = Omit<
   | 'parameters'
   | 'visualInteractions'
   | 'columnMetadata'
+  | 'layoutMode'
 > & {
-  schemaVersion: 2 | 3 | 4 | 5 | 6 | 7;
+  schemaVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8;
   pages?: LegacyPage[];
   bookmarks?: LegacyBookmark[];
   theme?: ReportTheme;
@@ -78,6 +80,7 @@ type LegacyReport = Omit<
   parameters?: ReportDocument['parameters'];
   visualInteractions?: ReportDocument['visualInteractions'];
   columnMetadata?: ReportDocument['columnMetadata'];
+  layoutMode?: ReportDocument['layoutMode'];
 };
 
 export function upgradeReport(value: unknown): ReportDocument {
@@ -86,7 +89,7 @@ export function upgradeReport(value: unknown): ReportDocument {
   }
   const candidate = value as Record<string, unknown>;
   if (
-    ![2, 3, 4, 5, 6, 7].includes(Number(candidate.schemaVersion)) ||
+    ![2, 3, 4, 5, 6, 7, 8].includes(Number(candidate.schemaVersion)) ||
     !Array.isArray(candidate.tables) ||
     !Array.isArray(candidate.widgets)
   ) {
@@ -117,6 +120,7 @@ export function upgradeReport(value: unknown): ReportDocument {
       }))
     : [page];
   const pageIds = new Set(pages.map((item) => item.id));
+  const layoutMode = legacy.layoutMode === 'free' ? 'free' : 'snap';
   const widgets = legacy.widgets.map((widget) => ({
     ...widget,
     pageId:
@@ -130,6 +134,9 @@ export function upgradeReport(value: unknown): ReportDocument {
     conditionalFormatting: widget.conditionalFormatting ?? false,
     conditionalMinColor: widget.conditionalMinColor ?? '#dbeafe',
     conditionalMaxColor: widget.conditionalMaxColor ?? widget.color,
+    numberFormat:
+      widget.measure === '__rows' ? 'standard' : widget.numberFormat,
+    layout: normalizeWidgetLayoutForMode(widget.layout, layoutMode),
   }));
   const upgradeFilter = (filter: LegacyFilter): ReportFilter => ({
     ...filter,
@@ -139,7 +146,8 @@ export function upgradeReport(value: unknown): ReportDocument {
 
   return {
     ...legacy,
-    schemaVersion: 7,
+    schemaVersion: 8,
+    layoutMode,
     pages,
     bookmarks: (legacy.bookmarks ?? []).map((bookmark) => ({
       ...bookmark,

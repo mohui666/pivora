@@ -203,7 +203,7 @@ export function ChartVisual({
   }
   if (widget.kind === 'table' || widget.kind === 'matrix') {
     return (
-      <div className="h-full overflow-auto rounded-lg border">
+      <div className="visual-table-shell">
         <table className="visual-table">
           <thead>
             <tr>

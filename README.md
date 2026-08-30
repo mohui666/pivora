@@ -36,7 +36,7 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 | 🧹  | **Data preparation**     | 14 ordered query operations, including merge, append, pivot, unpivot, cleaning, profiling, and previews  |
 | 🧩  | **Semantic modeling**    | Four cardinalities, diagnostics, formulas, measures, what-if parameters, and curated column metadata     |
 | 📊  | **Visual authoring**     | 14 visuals, hierarchies, drillthrough, conditional scales, secondary measures, sorting, and Top N        |
-| ✨  | **Report authoring**     | Multi-page canvas, scoped filters, interaction matrix, synced slicers, themes, bookmarks, undo, and redo |
+| ✨  | **Report authoring**     | Multi-page canvas, auto-snap or overlapping freeform layout, scoped filters, interactions, themes, and undo |
 | 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                           |
 | 🛟  | **Workspace recovery**   | Reopen the last active report and restore from up to 30 compressed manual/automatic local checkpoints    |
 | 🧱  | **Report templates**     | Start blank or use guided retail, executive, and live scenario-planning report structures                |
@@ -100,7 +100,7 @@ No Sites binding, hosted service, or external database is required.
 1. Select **New** to start from a blank canvas or guided local template, then choose **Import** for one or more supported files.
 2. Open **Data & clean** to build an ordered preparation pipeline, clean columns non-destructively, and inspect quality, frequency, and numeric distribution for every field.
 3. Open **Model** to define relationships, formulas such as `[revenue] - [cost]`, reusable measures, row rules, what-if parameters, and report-facing column metadata.
-4. Return to **Dashboard**, create pages, add visuals, and configure aggregations, quick calculations, filter scopes, visual interactions, synced slicers, and page drillthrough fields.
+4. Return to **Dashboard**, choose **Auto snap** or **Freeform**, create pages, add visuals, and configure aggregations, quick calculations, filter scopes, visual interactions, synced slicers, and page drillthrough fields. Freeform keeps fine positions and allows intentional overlap.
 5. Click a chart value to cross-filter related visuals or transfer its context into a configured drillthrough page; capture useful states as bookmarks.
 6. Apply a report theme, undo/redo edits, save a restorable checkpoint, export a portable `.pivora` bundle, or render the active page to PNG/PDF.
 
@@ -121,7 +121,7 @@ Pivora uses a deliberately compact semantic layer:
 - **Drillthrough pages** declare one or more target fields and can transfer the selected value alone or preserve the full source context.
 - **Column profiles** calculate valid, empty, error, and distinct counts alongside top values, histograms, min/max, mean, median, and standard deviation.
 - **Pages, bookmarks, and themes** capture presentation and filter state without changing source data.
-- **Widgets** store query configuration, visibility, formatting, interactions, and responsive grid layout.
+- **Widgets** store query configuration, visibility, formatting, interactions, and a persisted 12-column snap or 48-column freeform layout. Freeform visuals may overlap; the selected or actively dragged visual rises to the front. Invalid legacy geometry is repaired when a report opens.
 
 Example calculated fields:
 
@@ -184,6 +184,7 @@ Browser
 | [`lib/bi-model.ts`](./lib/bi-model.ts)                               | Transforms, formulas, relationships, materialization, and filters  |
 | [`lib/report-storage.ts`](./lib/report-storage.ts)                   | IndexedDB persistence and report library                           |
 | [`lib/report-schema.ts`](./lib/report-schema.ts)                     | Backward-compatible report upgrades and built-in themes            |
+| [`lib/grid-layout.ts`](./lib/grid-layout.ts)                         | Layout modes, geometry conversion, bounds, and recovery             |
 | [`components/bi/chart-visual.tsx`](./components/bi/chart-visual.tsx) | Fourteen visual types and interaction handling                     |
 | [`lib/sample-report.ts`](./lib/sample-report.ts)                     | Complete sample dataset, model, and dashboard                      |
 
@@ -208,7 +209,7 @@ For datasets that exceed the browser's practical memory budget, reduce the sourc
 ## Quality gates
 
 ```bash
-npm test       # 30 focused checks for profiling, formulas, filters, joins, templates, schema, and imports
+npm test       # 34 focused checks for analytics, imports, schema, recovery, and layout modes
 npm run lint   # type-aware lint and React checks
 npm run build  # production build
 ```
@@ -250,6 +251,7 @@ These constraints keep the project private-by-default, understandable, and easy 
 - [x] Add display names, descriptions, categories, default formats, hidden fields, and sort-by-column metadata
 - [x] Add last-workspace crash recovery and retained local version checkpoints
 - [x] Add blank, guided retail, executive, and scenario-planning report templates
+- [x] Add stable table resizing, explicit table switching, and auto-snap/freeform canvas modes
 - [ ] Add ODBC-style bridge and data-lake connectors
 - [ ] Add repeatable end-to-end browser tests for import, authoring, and export flows
 - [ ] Add internationalization
