@@ -7,6 +7,7 @@ import {
   inferFields,
   normalizeRows,
   profileColumn,
+  sortAggregatedPointsByColumn,
   summarize,
 } from './analytics';
 
@@ -102,5 +103,27 @@ void test('profiles column quality, distribution, and descriptive statistics', (
   assert.equal(
     profile.distribution.reduce((sum, bin) => sum + bin.count, 0),
     3,
+  );
+});
+
+void test('sorts aggregated categories by a configured metadata column', () => {
+  const points = [
+    { label: 'West', value: 500 },
+    { label: 'East', value: 2000 },
+    { label: 'North', value: 900 },
+  ];
+  const ordered = sortAggregatedPointsByColumn(
+    points,
+    [
+      { region: 'East', region_order: 2 },
+      { region: 'West', region_order: 3 },
+      { region: 'North', region_order: 1 },
+    ],
+    'region',
+    'region_order',
+  );
+  assert.deepEqual(
+    ordered.map((point) => point.label),
+    ['North', 'East', 'West'],
   );
 });

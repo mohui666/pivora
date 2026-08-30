@@ -1192,6 +1192,44 @@
   border-bottom: 1px solid var(--border);
   padding: 0.75rem 0;
 }
+.interaction-matrix {
+  display: grid;
+  gap: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: color-mix(in oklab, var(--primary) 4%, var(--card));
+  padding: 0.65rem;
+}
+.interaction-matrix header {
+  margin-bottom: 0.15rem;
+}
+.interaction-matrix header strong,
+.interaction-matrix header small {
+  display: block;
+}
+.interaction-matrix header strong {
+  font-size: 0.68rem;
+}
+.interaction-matrix header small {
+  margin-top: 0.1rem;
+  color: var(--muted-foreground);
+  font-size: 0.58rem;
+  line-height: 1.4;
+}
+.interaction-matrix > label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5.5rem;
+  align-items: center;
+  gap: 0.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+.interaction-matrix > label > span {
+  overflow: hidden;
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .check-grid label {
   display: flex;
   align-items: center;
@@ -1426,6 +1464,27 @@
   gap: 0.5rem;
   padding: 0.7rem 0.9rem;
 }
+.query-field-picker {
+  display: flex;
+  min-width: 14rem;
+  max-height: 5.3rem;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+  overflow: auto;
+  border: 1px solid var(--input);
+  border-radius: 0.5rem;
+  padding: 0.35rem;
+}
+.query-field-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 99px;
+  background: var(--muted);
+  padding: 0.22rem 0.38rem;
+  font-size: 0.58rem;
+  white-space: nowrap;
+}
 .query-step-list {
   border-top: 1px solid var(--border);
   padding: 0.35rem 0.9rem 0.6rem;
@@ -1538,6 +1597,44 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.9rem;
+}
+.metadata-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(10rem, 1fr));
+  align-items: end;
+  gap: 0.7rem;
+  padding: 0.9rem;
+}
+.metadata-form > label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted-foreground);
+  font-size: 0.62rem;
+  font-weight: 650;
+}
+.metadata-description {
+  grid-column: span 2;
+}
+.metadata-description textarea {
+  min-height: 4.25rem;
+  resize: vertical;
+  line-height: 1.45;
+}
+.metadata-hidden {
+  display: flex !important;
+  min-height: 2.25rem;
+  grid-auto-flow: column;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  justify-content: start;
+  gap: 0.45rem !important;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  color: var(--foreground) !important;
+}
+.metadata-hidden input {
+  accent-color: var(--primary);
 }
 .role-rule-form {
   display: grid;
@@ -1742,6 +1839,42 @@
   color: var(--muted-foreground);
   font-family: var(--font-geist-mono);
   font-size: 0.58rem;
+}
+.table-map article p .field-copy {
+  display: grid;
+  width: auto;
+  min-width: 0;
+  flex: 1;
+  gap: 0.08rem;
+  color: var(--foreground);
+  font-family: inherit;
+}
+.table-map article p .field-copy strong {
+  overflow: hidden;
+  font-size: 0.66rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table-map article p .field-copy small {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.54rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table-map article p.hidden-field {
+  opacity: 0.62;
+}
+.table-map article p em {
+  align-self: center;
+  border-radius: 999px;
+  background: var(--muted);
+  padding: 0.14rem 0.32rem;
+  color: var(--muted-foreground);
+  font-size: 0.5rem;
+  font-style: normal;
+  text-transform: uppercase;
 }
 .table-map article p.calculated {
   color: var(--primary);
@@ -2050,10 +2183,14 @@
   .calc-form,
   .parameter-form,
   .measure-form,
+  .metadata-form,
   .model-form,
   .role-rule-form,
   .query-step-form {
     grid-template-columns: 1fr;
+  }
+  .metadata-description {
+    grid-column: auto;
   }
   .quality-grid,
   .profile-details {

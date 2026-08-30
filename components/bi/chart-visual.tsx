@@ -82,11 +82,15 @@ export function ChartVisual({
   points,
   secondaryPoints,
   onPointClick,
+  dimensionLabel,
+  measureLabel,
 }: {
   widget: ChartWidget;
   points: AggregatedPoint[];
   secondaryPoints?: AggregatedPoint[];
   onPointClick?: (label: string) => void;
+  dimensionLabel?: string;
+  measureLabel?: string;
 }) {
   const hydrated = useSyncExternalStore(
     subscribeToHydration,
@@ -131,7 +135,7 @@ export function ChartVisual({
           {formatVisualValue(total, widget.numberFormat)}
         </strong>
         <p className="mt-1 text-xs text-muted-foreground">
-          {widget.aggregation} of {widget.measure}
+          {widget.aggregation} of {measureLabel ?? widget.measure}
         </p>
       </div>
     );
@@ -203,8 +207,8 @@ export function ChartVisual({
         <table className="visual-table">
           <thead>
             <tr>
-              <th>{widget.dimension}</th>
-              <th>{widget.measure}</th>
+              <th>{dimensionLabel ?? widget.dimension}</th>
+              <th>{measureLabel ?? widget.measure}</th>
               {widget.kind === 'matrix' && <th>Share</th>}
             </tr>
           </thead>
@@ -246,7 +250,7 @@ export function ChartVisual({
       cursor={{ fill: 'var(--muted)' }}
       formatter={(value) => [
         formatVisualValue(Number(value), widget.numberFormat),
-        widget.measure,
+        measureLabel ?? widget.measure,
       ]}
     />
   );

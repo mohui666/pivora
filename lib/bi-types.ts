@@ -97,6 +97,34 @@ export type ColumnTransform = {
   remove?: boolean;
 };
 
+export type DataCategory =
+  | 'uncategorized'
+  | 'address'
+  | 'place'
+  | 'continent'
+  | 'county'
+  | 'city'
+  | 'state-or-province'
+  | 'country'
+  | 'postal-code'
+  | 'latitude'
+  | 'longitude'
+  | 'barcode'
+  | 'web-url'
+  | 'image-url';
+
+export type ColumnMetadata = {
+  id: string;
+  tableId: string;
+  field: string;
+  displayName: string;
+  description: string;
+  category: DataCategory;
+  hidden: boolean;
+  sortByField?: string;
+  numberFormat?: NumberFormat;
+};
+
 export type QueryStepKind =
   | 'filter'
   | 'sort'
@@ -107,7 +135,11 @@ export type QueryStepKind =
   | 'rename-column'
   | 'split-column'
   | 'custom-column'
-  | 'group-by';
+  | 'group-by'
+  | 'append-table'
+  | 'merge-table'
+  | 'unpivot-columns'
+  | 'pivot-column';
 export type QueryOperator =
   | 'equals'
   | 'not-equals'
@@ -132,6 +164,10 @@ export type QueryStep = {
   separator?: string;
   targetField?: string;
   aggregation?: Aggregation;
+  sourceTableId?: string;
+  sourceField?: string;
+  fields?: string[];
+  joinType?: 'left' | 'inner';
 };
 
 export type ReportFilter = {
@@ -180,6 +216,7 @@ export type ChartWidget = {
   showLegend: boolean;
   numberFormat: NumberFormat;
   interactions: boolean;
+  syncGroup?: string;
   sortDirection?: SortDirection;
   topN?: number;
   hidden?: boolean;
@@ -189,6 +226,13 @@ export type ChartWidget = {
   conditionalMinColor?: string;
   conditionalMaxColor?: string;
   layout: WidgetLayout;
+};
+
+export type VisualInteraction = {
+  id: string;
+  sourceWidgetId: string;
+  targetWidgetId: string;
+  mode: 'filter' | 'none';
 };
 
 export type ReportPage = {
@@ -221,7 +265,7 @@ export type ReportTheme = {
 };
 
 export type ReportDocument = {
-  schemaVersion: 5;
+  schemaVersion: 7;
   id: string;
   name: string;
   createdAt: string;
@@ -236,10 +280,12 @@ export type ReportDocument = {
   calculatedFields: CalculatedField[];
   parameters: ReportParameter[];
   measures: SemanticMeasure[];
+  columnMetadata: ColumnMetadata[];
   transforms: ColumnTransform[];
   querySteps: QueryStep[];
   roleRules: RoleRule[];
   filters: ReportFilter[];
+  visualInteractions: VisualInteraction[];
   widgets: ChartWidget[];
 };
 

@@ -16,6 +16,7 @@ import type {
   ReportParameter,
   ReportRole,
   RoleRule,
+  VisualInteraction,
 } from './bi-types';
 
 const parser = new Parser({
@@ -129,6 +130,8 @@ export function applyQuerySteps(
   rows: DataRow[],
   tableId: string,
   steps: QueryStep[],
+  resolveTableRows: (tableId: string) => DataRow[] = () => [],
+  parameters: ReportParameter[] = [],
 ): DataRow[] {
   let result = rows;
   for (const step of steps.filter(
@@ -186,14 +189,19 @@ export function applyQuerySteps(
         };
       });
     } else if (step.kind === 'custom-column') {
-      result = applyCalculatedFields(result, tableId, [
-        {
-          id: step.id,
-          tableId,
-          name: step.name || 'Custom',
-          expression: step.value,
-        },
-      ]);
+      result = applyCalculatedFields(
+        result,
+        tableId,
+        [
+          {
+            id: step.id,
+            tableId,
+            name: step.name || 'Custom',
+            expression: step.value,
+          },
+        ],
+        parameters,
+      );
     } else if (step.kind === 'group-by') {
       const groups = new Map<string, number[]>();
       for (const row of result) {
@@ -224,6 +232,94 @@ export function applyQuerySteps(
           [step.name || `${aggregation}_${step.targetField}`]: value,
         };
       });
+    } else if (step.kind === 'append-table') {
+      const sourceRows = resolveTableRows(step.sourceTableId ?? '');
+      result = [
+        ...result.map((row) => ({ ...row })),
+        ...sourceRows.map((row) => ({ ...row })),
+      ];
+    } else if (step.kind === 'merge-table') {
+      const sourceRows = resolveTableRows(step.sourceTableId ?? '');
+      const sourceField = step.sourceField ?? step.field;
+      const sourceIndex = new Map<string, DataRow[]>();
+      for (const row of sourceRows) {
+        const key = String(row[sourceField] ?? '');
+        sourceIndex.set(key, [...(sourceIndex.get(key) ?? []), row]);
+      }
+      result = result.flatMap((row) => {
+        const matches = sourceIndex.get(String(row[step.field] ?? ''));
+        if (!matches?.length) return step.joinType === 'inner' ? [] : [row];
+        return matches.map((match) => ({
+          ...row,
+          ...Object.fromEntries(
+            Object.entries(match)
+              .filter(([field]) => field !== sourceField)
+              .map(([field, value]) => [
+                `${step.name || 'Merged'}.${field}`,
+                value,
+              ]),
+          ),
+        }));
+      });
+    } else if (step.kind === 'unpivot-columns') {
+      const selected = new Set(step.fields ?? []);
+      const attributeField = step.name || 'Attribute';
+      const valueField = step.targetField || 'Value';
+      result = result.flatMap((row) => {
+        const base = Object.fromEntries(
+          Object.entries(row).filter(([field]) => !selected.has(field)),
+        );
+        return Array.from(selected, (field) => ({
+          ...base,
+          [attributeField]: field,
+          [valueField]: row[field] ?? null,
+        }));
+      });
+    } else if (step.kind === 'pivot-column') {
+      const valueField = step.targetField ?? '';
+      const groupFields = Array.from(
+        new Set(result.flatMap((row) => Object.keys(row))),
+      ).filter((field) => field !== step.field && field !== valueField);
+      const groups = new Map<
+        string,
+        { base: DataRow; values: Map<string, number[]> }
+      >();
+      for (const row of result) {
+        const base = Object.fromEntries(
+          groupFields.map((field) => [field, row[field] ?? null]),
+        );
+        const key = JSON.stringify(base);
+        const group = groups.get(key) ?? { base, values: new Map() };
+        const pivotName = `${step.name ?? ''}${String(row[step.field] ?? 'Blank')}`;
+        const values = group.values.get(pivotName) ?? [];
+        const numeric = Number(row[valueField]);
+        if (step.aggregation === 'count') values.push(1);
+        else if (Number.isFinite(numeric)) values.push(numeric);
+        group.values.set(pivotName, values);
+        groups.set(key, group);
+      }
+      result = Array.from(groups.values(), ({ base, values }) => ({
+        ...base,
+        ...Object.fromEntries(
+          Array.from(values, ([field, items]) => {
+            const aggregation = step.aggregation ?? 'sum';
+            const value = !items.length
+              ? 0
+              : aggregation === 'count'
+                ? items.length
+                : aggregation === 'distinct-count'
+                  ? new Set(items).size
+                  : aggregation === 'average'
+                    ? items.reduce((sum, item) => sum + item, 0) / items.length
+                    : aggregation === 'minimum'
+                      ? Math.min(...items)
+                      : aggregation === 'maximum'
+                        ? Math.max(...items)
+                        : items.reduce((sum, item) => sum + item, 0);
+            return [field, value];
+          }),
+        ),
+      }));
     }
   }
   return result;
@@ -321,18 +417,33 @@ export function materializeTable({
   querySteps?: QueryStep[];
   parameters?: ReportParameter[];
 }): DataRow[] {
+  const preparedCache = new Map<string, DataRow[]>();
+  const prepare = (id: string, ancestors = new Set<string>()): DataRow[] => {
+    const cached = preparedCache.get(id);
+    if (cached) return cached;
+    const source = tables.find((candidate) => candidate.id === id);
+    if (!source) return [];
+    const transformed = applyTransforms(source.rows, source.id, transforms);
+    if (ancestors.has(id)) return [];
+    const path = new Set(ancestors).add(id);
+    const prepared = applyCalculatedFields(
+      applyQuerySteps(
+        transformed,
+        source.id,
+        querySteps,
+        (sourceId) => prepare(sourceId, path),
+        parameters,
+      ),
+      source.id,
+      calculatedFields,
+      parameters,
+    );
+    preparedCache.set(id, prepared);
+    return prepared;
+  };
   const table = tables.find((candidate) => candidate.id === tableId);
   if (!table) return [];
-  let rows = applyCalculatedFields(
-    applyQuerySteps(
-      applyTransforms(table.rows, table.id, transforms),
-      table.id,
-      querySteps,
-    ),
-    table.id,
-    calculatedFields,
-    parameters,
-  );
+  let rows = prepare(table.id);
   const direct = relationships.filter(
     (relationship) =>
       relationship.active !== false &&
@@ -347,16 +458,7 @@ export function materializeTable({
     const otherField = baseIsLeft ? relation.rightField : relation.leftField;
     const other = tables.find((candidate) => candidate.id === otherId);
     if (!other) continue;
-    const otherRows = applyCalculatedFields(
-      applyQuerySteps(
-        applyTransforms(other.rows, other.id, transforms),
-        other.id,
-        querySteps,
-      ),
-      other.id,
-      calculatedFields,
-      parameters,
-    );
+    const otherRows = prepare(other.id);
     const index = new Map<string, DataRow[]>();
     for (const row of otherRows) {
       const key = String(row[otherField] ?? '');
@@ -429,14 +531,22 @@ export function filtersForContext(
   filters: ReportFilter[],
   pageId: string,
   widgetId: string,
+  visualInteractions: VisualInteraction[] = [],
 ): ReportFilter[] {
   return filters.filter((filter) => {
     if (filter.scope === 'report') return true;
     if (filter.scope === 'page') return filter.pageId === pageId;
     if (filter.scope === 'visual') return filter.widgetId === widgetId;
+    const sourceWidgetId = filter.sourceWidgetId?.split(':drill:')[0];
+    const interaction = visualInteractions.find(
+      (candidate) =>
+        candidate.sourceWidgetId === sourceWidgetId &&
+        candidate.targetWidgetId === widgetId,
+    );
     return (
       (!filter.pageId || filter.pageId === pageId) &&
-      filter.sourceWidgetId !== widgetId
+      sourceWidgetId !== widgetId &&
+      interaction?.mode !== 'none'
     );
   });
 }

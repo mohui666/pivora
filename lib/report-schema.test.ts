@@ -13,6 +13,8 @@ void test('upgrades schema v2 reports with pages, themes, and visual defaults', 
     bookmarks: undefined,
     theme: undefined,
     parameters: undefined,
+    visualInteractions: undefined,
+    columnMetadata: undefined,
     widgets: current.widgets.map((widget) =>
       Object.fromEntries(
         Object.entries(widget).filter(([key]) => key !== 'pageId'),
@@ -31,7 +33,7 @@ void test('upgrades schema v2 reports with pages, themes, and visual defaults', 
 
   const upgraded = upgradeReport(legacy);
 
-  assert.equal(upgraded.schemaVersion, 5);
+  assert.equal(upgraded.schemaVersion, 7);
   assert.equal(upgraded.pages[0].name, 'Overview');
   assert.equal(upgraded.widgets[0].pageId, upgraded.pages[0].id);
   assert.equal(upgraded.widgets[0].sortDirection, 'none');
@@ -41,6 +43,8 @@ void test('upgrades schema v2 reports with pages, themes, and visual defaults', 
   assert.deepEqual(upgraded.measures, []);
   assert.deepEqual(upgraded.roleRules, []);
   assert.deepEqual(upgraded.parameters, []);
+  assert.deepEqual(upgraded.visualInteractions, []);
+  assert.deepEqual(upgraded.columnMetadata, []);
   assert.deepEqual(upgraded.pages[0].drillthroughFields, []);
   assert.equal(upgraded.pages[0].keepAllFilters, true);
   assert.equal(upgraded.filters[0].scope, 'interaction');

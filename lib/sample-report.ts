@@ -140,7 +140,7 @@ const widgets: ChartWidget[] = [
 export function createSampleReport(): ReportDocument {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 5,
+    schemaVersion: 7,
     id: createId('report'),
     name: 'Retail performance',
     createdAt: now,
@@ -188,10 +188,32 @@ export function createSampleReport(): ReportDocument {
       },
     ],
     measures: [],
+    columnMetadata: [
+      {
+        id: 'metadata_revenue',
+        tableId: sales.id,
+        field: 'revenue',
+        displayName: 'Revenue',
+        description: 'Gross sales revenue before cost.',
+        category: 'uncategorized',
+        hidden: false,
+        numberFormat: 'currency',
+      },
+      {
+        id: 'metadata_region',
+        tableId: sales.id,
+        field: 'region',
+        displayName: 'Sales region',
+        description: 'Commercial territory used for regional analysis.',
+        category: 'state-or-province',
+        hidden: false,
+      },
+    ],
     transforms: [],
     querySteps: [],
     roleRules: [],
     filters: [],
+    visualInteractions: [],
     widgets,
   };
 }

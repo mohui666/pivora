@@ -232,6 +232,29 @@ void test('selects report, page, visual, and interaction filter contexts', () =>
     selected.map((filter) => filter.id),
     ['report', 'page', 'visual', 'interaction'],
   );
+
+  const suppressed = filtersForContext(
+    [
+      {
+        ...base,
+        id: 'interaction',
+        scope: 'interaction',
+        pageId: 'overview',
+        sourceWidgetId: 'source',
+      },
+    ],
+    'overview',
+    'chart',
+    [
+      {
+        id: 'disable-source-chart',
+        sourceWidgetId: 'source',
+        targetWidgetId: 'chart',
+        mode: 'none',
+      },
+    ],
+  );
+  assert.deepEqual(suppressed, []);
 });
 
 void test('transfers selected and optional source context into a drillthrough page', () => {
@@ -439,4 +462,138 @@ void test('applies advanced replace, split, custom, and group query steps', () =
     { product_id: 'p1', total_cost: 50 },
     { product_id: 'p2', total_cost: 30 },
   ]);
+});
+
+void test('appends and merges referenced query tables', () => {
+  const base = {
+    tableId: sales.id,
+    operator: 'equals' as const,
+    direction: 'ascending' as const,
+    count: 100,
+    start: 1,
+    enabled: true,
+    field: '',
+    value: '',
+    name: '',
+  };
+  const resolve = (tableId: string) =>
+    tableId === products.id ? products.rows : [];
+  const appended = applyQuerySteps(
+    sales.rows,
+    sales.id,
+    [
+      {
+        ...base,
+        id: 'append',
+        kind: 'append-table',
+        sourceTableId: products.id,
+      },
+    ],
+    resolve,
+  );
+  assert.equal(appended.length, 4);
+  assert.equal(appended[2].category, 'Hardware');
+
+  const merged = applyQuerySteps(
+    sales.rows,
+    sales.id,
+    [
+      {
+        ...base,
+        id: 'merge',
+        kind: 'merge-table',
+        field: 'product_id',
+        sourceTableId: products.id,
+        sourceField: 'id',
+        name: 'Product',
+        joinType: 'left',
+      },
+    ],
+    resolve,
+  );
+  assert.equal(merged[0]['Product.category'], 'Hardware');
+  assert.equal(merged[1]['Product.category'], 'Software');
+});
+
+void test('unpivots selected fields and pivots attribute rows back into columns', () => {
+  const base = {
+    tableId: sales.id,
+    operator: 'equals' as const,
+    direction: 'ascending' as const,
+    count: 100,
+    start: 1,
+    enabled: true,
+    value: '',
+  };
+  const unpivoted = applyQuerySteps(sales.rows, sales.id, [
+    {
+      ...base,
+      id: 'unpivot',
+      kind: 'unpivot-columns',
+      field: '',
+      fields: ['revenue', 'cost'],
+      name: 'Metric',
+      targetField: 'Amount',
+    },
+  ]);
+  assert.equal(unpivoted.length, 4);
+  assert.deepEqual(
+    unpivoted.slice(0, 2).map((row) => [row.Metric, row.Amount]),
+    [
+      ['revenue', ' 120 '],
+      ['cost', 50],
+    ],
+  );
+
+  const pivoted = applyQuerySteps(unpivoted, sales.id, [
+    {
+      ...base,
+      id: 'pivot',
+      kind: 'pivot-column',
+      field: 'Metric',
+      targetField: 'Amount',
+      name: '',
+      aggregation: 'sum',
+    },
+  ]);
+  assert.equal(pivoted.length, 2);
+  assert.equal(pivoted[0].revenue, 120);
+  assert.equal(pivoted[0].cost, 50);
+});
+
+void test('ignores cyclic query references while resolving dependent tables', () => {
+  const base = {
+    operator: 'equals' as const,
+    direction: 'ascending' as const,
+    count: 100,
+    start: 1,
+    enabled: true,
+    field: '',
+    value: '',
+    name: '',
+  };
+  const rows = materializeTable({
+    tableId: sales.id,
+    tables: [sales, products],
+    relationships: [],
+    calculatedFields: [],
+    transforms: [],
+    querySteps: [
+      {
+        ...base,
+        id: 'sales-products',
+        tableId: sales.id,
+        kind: 'append-table',
+        sourceTableId: products.id,
+      },
+      {
+        ...base,
+        id: 'products-sales',
+        tableId: products.id,
+        kind: 'append-table',
+        sourceTableId: sales.id,
+      },
+    ],
+  });
+  assert.equal(rows.length, 4);
 });

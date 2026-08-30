@@ -63,8 +63,10 @@ type LegacyReport = Omit<
   | 'roleRules'
   | 'filters'
   | 'parameters'
+  | 'visualInteractions'
+  | 'columnMetadata'
 > & {
-  schemaVersion: 2 | 3 | 4 | 5;
+  schemaVersion: 2 | 3 | 4 | 5 | 6 | 7;
   pages?: LegacyPage[];
   bookmarks?: LegacyBookmark[];
   theme?: ReportTheme;
@@ -74,6 +76,8 @@ type LegacyReport = Omit<
   roleRules?: RoleRule[];
   filters?: LegacyFilter[];
   parameters?: ReportDocument['parameters'];
+  visualInteractions?: ReportDocument['visualInteractions'];
+  columnMetadata?: ReportDocument['columnMetadata'];
 };
 
 export function upgradeReport(value: unknown): ReportDocument {
@@ -82,7 +86,7 @@ export function upgradeReport(value: unknown): ReportDocument {
   }
   const candidate = value as Record<string, unknown>;
   if (
-    ![2, 3, 4, 5].includes(Number(candidate.schemaVersion)) ||
+    ![2, 3, 4, 5, 6, 7].includes(Number(candidate.schemaVersion)) ||
     !Array.isArray(candidate.tables) ||
     !Array.isArray(candidate.widgets)
   ) {
@@ -135,7 +139,7 @@ export function upgradeReport(value: unknown): ReportDocument {
 
   return {
     ...legacy,
-    schemaVersion: 5,
+    schemaVersion: 7,
     pages,
     bookmarks: (legacy.bookmarks ?? []).map((bookmark) => ({
       ...bookmark,
@@ -155,8 +159,10 @@ export function upgradeReport(value: unknown): ReportDocument {
     querySteps: legacy.querySteps ?? [],
     parameters: legacy.parameters ?? [],
     measures: legacy.measures ?? [],
+    columnMetadata: legacy.columnMetadata ?? [],
     roleRules: legacy.roleRules ?? [],
     filters: (legacy.filters ?? []).map(upgradeFilter),
+    visualInteractions: legacy.visualInteractions ?? [],
     widgets,
   };
 }

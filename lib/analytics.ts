@@ -322,6 +322,34 @@ export function applyQuickCalculation(
   }));
 }
 
+export function sortAggregatedPointsByColumn(
+  points: AggregatedPoint[],
+  rows: DataRow[],
+  dimension: string,
+  sortByField: string,
+): AggregatedPoint[] {
+  const sortValues = new Map<string, DataRow[string]>();
+  for (const row of rows) {
+    const label = dimensionLabel(row[dimension], 'text');
+    if (!sortValues.has(label)) sortValues.set(label, row[sortByField]);
+  }
+  return [...points].sort((left, right) => {
+    const leftValue = sortValues.get(left.label);
+    const rightValue = sortValues.get(right.label);
+    if (leftValue === null || leftValue === undefined)
+      return rightValue === null || rightValue === undefined ? 0 : 1;
+    if (rightValue === null || rightValue === undefined) return -1;
+    const leftNumber = Number(leftValue);
+    const rightNumber = Number(rightValue);
+    return Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
+      ? leftNumber - rightNumber
+      : String(leftValue).localeCompare(String(rightValue), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        });
+  });
+}
+
 export function summarize(rows: DataRow[], measure: string) {
   const values = rows
     .map((row) => (measure === '__rows' ? 1 : Number(row[measure])))

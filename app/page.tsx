@@ -67,6 +67,7 @@ import {
   inferFields,
   profileColumn,
   type QuickCalculation,
+  sortAggregatedPointsByColumn,
 } from '@/lib/analytics';
 import {
   analyzeRelationship,
@@ -84,6 +85,7 @@ import type {
   CalculatedField,
   ChartKind,
   ChartWidget,
+  ColumnMetadata,
   ColumnTransform,
   DataTable,
   NumberFormat,
@@ -132,8 +134,16 @@ function defaultWidget(
   rows: DataTable['rows'],
   y: number,
   pageId: string,
+  columnMetadata: ColumnMetadata[] = [],
 ): ChartWidget {
-  const fields = inferFields(rows);
+  const hiddenFields = new Set(
+    columnMetadata
+      .filter((metadata) => metadata.tableId === table.id && metadata.hidden)
+      .map((metadata) => metadata.field),
+  );
+  const fields = inferFields(rows).filter(
+    (field) => !hiddenFields.has(field.name),
+  );
   const dimension =
     fields.find((field) => field.kind !== 'number') ?? fields[0];
   const measure = fields.find((field) => field.kind === 'number');
@@ -156,7 +166,7 @@ function defaultWidget(
   };
 }
 
-function describeQueryStep(step: QueryStep): string {
+function describeQueryStep(step: QueryStep, tables: DataTable[]): string {
   if (step.kind === 'filter')
     return `${step.field} · ${step.operator} ${step.value}`;
   if (step.kind === 'sort') return `${step.field} · ${step.direction}`;
@@ -169,6 +179,20 @@ function describeQueryStep(step: QueryStep): string {
   if (step.kind === 'split-column')
     return `${step.field} by “${step.separator || ','}”`;
   if (step.kind === 'custom-column') return `${step.name} = ${step.value}`;
+  if (step.kind === 'append-table') {
+    return `Append ${tables.find((table) => table.id === step.sourceTableId)?.name ?? 'table'}`;
+  }
+  if (step.kind === 'merge-table') {
+    return `${step.joinType ?? 'left'} join ${step.field} = ${
+      tables.find((table) => table.id === step.sourceTableId)?.name ?? 'table'
+    }.${step.sourceField}`;
+  }
+  if (step.kind === 'unpivot-columns') {
+    return `${step.fields?.join(', ') || 'no fields'} → ${step.name}/${step.targetField}`;
+  }
+  if (step.kind === 'pivot-column') {
+    return `${step.field} → columns · ${step.aggregation ?? 'sum'}(${step.targetField})`;
+  }
   return `${step.field} · ${step.aggregation ?? 'sum'}(${step.targetField}) → ${step.name}`;
 }
 
@@ -260,6 +284,10 @@ export default function Home() {
     name: '',
     expression: '',
   });
+  const [metadataSelection, setMetadataSelection] = useState({
+    tableId: 'table_sales',
+    field: 'revenue',
+  });
   const [parameterDraft, setParameterDraft] = useState<
     Omit<ReportParameter, 'id'>
   >({
@@ -298,6 +326,10 @@ export default function Home() {
       | 'separator'
       | 'targetField'
       | 'aggregation'
+      | 'sourceTableId'
+      | 'sourceField'
+      | 'fields'
+      | 'joinType'
     >
   >({
     kind: 'filter',
@@ -312,6 +344,10 @@ export default function Home() {
     separator: ',',
     targetField: 'revenue',
     aggregation: 'sum',
+    sourceTableId: 'table_products',
+    sourceField: 'product_id',
+    fields: ['revenue', 'cost'],
+    joinType: 'left',
   });
   const dataInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
@@ -417,18 +453,42 @@ export default function Home() {
       id: createId('page'),
       name: `${activePage.name} copy`,
     };
-    const copies = report.widgets
-      .filter((widget) => widget.pageId === activePage.id)
-      .map((widget) => ({
-        ...widget,
-        id: createId('widget'),
-        pageId: page.id,
-        layout: { ...widget.layout },
-      }));
+    const sourceWidgets = report.widgets.filter(
+      (widget) => widget.pageId === activePage.id,
+    );
+    const copies = sourceWidgets.map((widget) => ({
+      ...widget,
+      id: createId('widget'),
+      pageId: page.id,
+      layout: { ...widget.layout },
+    }));
+    const copiedWidgetIds = new Map(
+      sourceWidgets.map((widget, index) => [widget.id, copies[index].id]),
+    );
+    const copiedInteractions = report.visualInteractions.flatMap(
+      (interaction) => {
+        const sourceWidgetId = copiedWidgetIds.get(interaction.sourceWidgetId);
+        const targetWidgetId = copiedWidgetIds.get(interaction.targetWidgetId);
+        return sourceWidgetId && targetWidgetId
+          ? [
+              {
+                ...interaction,
+                id: createId('interaction'),
+                sourceWidgetId,
+                targetWidgetId,
+              },
+            ]
+          : [];
+      },
+    );
     updateReport((current) => ({
       ...current,
       pages: [...current.pages, page],
       widgets: [...current.widgets, ...copies],
+      visualInteractions: [
+        ...current.visualInteractions,
+        ...copiedInteractions,
+      ],
     }));
     setActivePageId(page.id);
     setSelectedWidgetId(copies[0]?.id ?? '');
@@ -462,6 +522,11 @@ export default function Home() {
           !Array.from(removedWidgetIds).some((widgetId) =>
             filter.sourceWidgetId?.startsWith(widgetId),
           ),
+      ),
+      visualInteractions: current.visualInteractions.filter(
+        (interaction) =>
+          !removedWidgetIds.has(interaction.sourceWidgetId) &&
+          !removedWidgetIds.has(interaction.targetWidgetId),
       ),
     }));
     if (next) selectPage(next.id);
@@ -625,6 +690,13 @@ export default function Home() {
     (tableId: string) => materializedFields(materialized.get(tableId) ?? []),
     [materialized],
   );
+  const metadataFor = useCallback(
+    (tableId: string, field: string) =>
+      report.columnMetadata.find(
+        (metadata) => metadata.tableId === tableId && metadata.field === field,
+      ),
+    [report.columnMetadata],
+  );
 
   const relationshipDiagnostics = useMemo(
     () =>
@@ -644,6 +716,7 @@ export default function Home() {
         report.filters,
         widget.pageId,
         widget.id,
+        report.visualInteractions,
       );
       const filtered = filterRows(
         rows,
@@ -671,6 +744,19 @@ export default function Home() {
         points,
         semanticMeasure?.calculation ?? widget.calculation,
       );
+      const sortByField = metadataFor(widget.tableId, dimension)?.sortByField;
+      if (
+        widget.sortDirection === 'none' &&
+        sortByField &&
+        dimensionKind !== 'date'
+      ) {
+        points = sortAggregatedPointsByColumn(
+          points,
+          filtered,
+          dimension,
+          sortByField,
+        );
+      }
       if (widget.sortDirection !== 'none') {
         const direction = widget.sortDirection === 'ascending' ? 1 : -1;
         points = [...points].sort((a, b) => (a.value - b.value) * direction);
@@ -680,11 +766,13 @@ export default function Home() {
     [
       fieldsFor,
       materialized,
+      metadataFor,
       report.filters,
       report.measures,
       report.role,
       report.roleRules,
       report.tables,
+      report.visualInteractions,
     ],
   );
 
@@ -758,6 +846,7 @@ export default function Home() {
               reconciled[0].rows,
               0,
               current.pages[0]?.id ?? 'page_overview',
+              current.columnMetadata,
             ),
           ];
         }
@@ -942,7 +1031,11 @@ export default function Home() {
       materialized.get(activeTable.id) ?? activeTable.rows,
       y,
       activePage.id,
+      report.columnMetadata,
     );
+    widget.numberFormat =
+      metadataFor(widget.tableId, widget.measure)?.numberFormat ??
+      widget.numberFormat;
     updateReport((current) => ({
       ...current,
       widgets: [...current.widgets, widget],
@@ -980,7 +1073,14 @@ export default function Home() {
       ...current,
       widgets: current.widgets.filter((widget) => widget.id !== id),
       filters: current.filters.filter(
-        (filter) => filter.sourceWidgetId !== id && filter.widgetId !== id,
+        (filter) =>
+          filter.sourceWidgetId?.split(':drill:')[0] !== id &&
+          filter.widgetId !== id,
+      ),
+      visualInteractions: current.visualInteractions.filter(
+        (interaction) =>
+          interaction.sourceWidgetId !== id &&
+          interaction.targetWidgetId !== id,
       ),
     }));
     setSelectedWidgetId('');
@@ -995,11 +1095,25 @@ export default function Home() {
     const tableId = related?.id ?? widget.tableId;
     const field = related ? rest.join('.') : effectiveDimension(widget);
     updateReport((current) => {
+      const synced = widget.kind === 'slicer' && !!widget.syncGroup?.trim();
+      const sourceWidgetIds = synced
+        ? current.widgets
+            .filter(
+              (candidate) =>
+                candidate.kind === 'slicer' &&
+                candidate.syncGroup?.trim() === widget.syncGroup?.trim(),
+            )
+            .map((candidate) => candidate.id)
+        : [widget.id];
       const previous = current.filters.find(
-        (filter) => filter.sourceWidgetId === widget.id,
+        (filter) =>
+          !!filter.sourceWidgetId &&
+          sourceWidgetIds.includes(filter.sourceWidgetId),
       );
       const filters = current.filters.filter(
-        (filter) => filter.sourceWidgetId !== widget.id,
+        (filter) =>
+          !filter.sourceWidgetId ||
+          !sourceWidgetIds.includes(filter.sourceWidgetId),
       );
       if (previous?.value === value) return { ...current, filters };
       return {
@@ -1013,7 +1127,7 @@ export default function Home() {
             operator: 'equals',
             value,
             scope: 'interaction',
-            pageId: widget.pageId,
+            pageId: synced ? undefined : widget.pageId,
             sourceWidgetId: widget.id,
           },
         ],
@@ -1134,6 +1248,40 @@ export default function Home() {
     });
   }
 
+  function setColumnMetadata(
+    tableId: string,
+    field: string,
+    patch: Partial<ColumnMetadata>,
+  ) {
+    if (!canEdit) return;
+    updateReport((current) => {
+      const existing = current.columnMetadata.find(
+        (metadata) => metadata.tableId === tableId && metadata.field === field,
+      );
+      const metadata: ColumnMetadata = {
+        id: existing?.id ?? createId('metadata'),
+        tableId,
+        field,
+        displayName: '',
+        description: '',
+        category: 'uncategorized',
+        hidden: false,
+        ...existing,
+        ...patch,
+      };
+      return {
+        ...current,
+        columnMetadata: [
+          ...current.columnMetadata.filter(
+            (candidate) =>
+              !(candidate.tableId === tableId && candidate.field === field),
+          ),
+          metadata,
+        ],
+      };
+    });
+  }
+
   function addRelationship() {
     const error = validateRelationship(relationDraft, report.tables);
     if (error) return showNotice(error);
@@ -1236,7 +1384,13 @@ export default function Home() {
   function addQueryStep() {
     if (!canEdit || !activeTable) return;
     if (
-      !['limit', 'add-index', 'custom-column'].includes(queryDraft.kind) &&
+      ![
+        'limit',
+        'add-index',
+        'custom-column',
+        'append-table',
+        'unpivot-columns',
+      ].includes(queryDraft.kind) &&
       !queryDraft.field
     ) {
       return showNotice('Choose a field for this query step.');
@@ -1247,7 +1401,30 @@ export default function Home() {
       if (error) return showNotice(error);
     }
     if (
-      ['rename-column', 'split-column', 'group-by'].includes(queryDraft.kind) &&
+      ['append-table', 'merge-table'].includes(queryDraft.kind) &&
+      (!queryDraft.sourceTableId || queryDraft.sourceTableId === activeTable.id)
+    ) {
+      return showNotice('Choose a different source table.');
+    }
+    if (queryDraft.kind === 'merge-table' && !queryDraft.sourceField) {
+      return showNotice('Choose the source join field.');
+    }
+    if (
+      queryDraft.kind === 'unpivot-columns' &&
+      (!queryDraft.fields?.length || !queryDraft.targetField)
+    ) {
+      return showNotice('Choose fields and output names for unpivot.');
+    }
+    if (
+      queryDraft.kind === 'pivot-column' &&
+      (!queryDraft.targetField || queryDraft.targetField === queryDraft.field)
+    ) {
+      return showNotice('Choose a separate value field for pivot.');
+    }
+    if (
+      ['rename-column', 'split-column', 'group-by', 'unpivot-columns'].includes(
+        queryDraft.kind,
+      ) &&
       !queryDraft.name.trim()
     ) {
       return showNotice('Name the output column.');
@@ -1258,7 +1435,9 @@ export default function Home() {
       enabled: true,
       ...queryDraft,
       count: Math.max(0, queryDraft.count),
-      name: queryDraft.name.trim() || 'Index',
+      name:
+        queryDraft.name.trim() ||
+        (queryDraft.kind === 'add-index' ? 'Index' : ''),
     };
     updateReport((current) => ({
       ...current,
@@ -1470,12 +1649,34 @@ export default function Home() {
     (dataPage + 1) * pageSize,
   );
   const selectedFields = selectedWidget
-    ? fieldsFor(selectedWidget.tableId)
+    ? fieldsFor(selectedWidget.tableId).filter(
+        (field) =>
+          field.name === selectedWidget.dimension ||
+          field.name === selectedWidget.measure ||
+          field.name === selectedWidget.secondaryMeasure ||
+          selectedWidget.hierarchy?.includes(field.name) ||
+          !metadataFor(selectedWidget.tableId, field.name)?.hidden,
+      )
     : [];
   const selectedNumericFields = selectedFields.filter(
     (field) => field.kind === 'number',
   );
   const rawActiveFields = inferFields(activeTable?.rows ?? []);
+  const effectiveMetadataTableId = report.tables.some(
+    (table) => table.id === metadataSelection.tableId,
+  )
+    ? metadataSelection.tableId
+    : (report.tables[0]?.id ?? '');
+  const metadataFields = fieldsFor(effectiveMetadataTableId);
+  const effectiveMetadataField = metadataFields.some(
+    (field) => field.name === metadataSelection.field,
+  )
+    ? metadataSelection.field
+    : (metadataFields[0]?.name ?? '');
+  const activeColumnMetadata = metadataFor(
+    effectiveMetadataTableId,
+    effectiveMetadataField,
+  );
   const drillthroughActions = report.filters.flatMap((filter) => {
     const inCurrentContext =
       filter.scope === 'report' ||
@@ -2340,6 +2541,20 @@ export default function Home() {
                                     })
                                   : undefined
                               }
+                              dimensionLabel={
+                                metadataFor(
+                                  widget.tableId,
+                                  effectiveDimension(widget),
+                                )?.displayName || effectiveDimension(widget)
+                              }
+                              measureLabel={
+                                report.measures.find(
+                                  (measure) => measure.id === widget.measure,
+                                )?.name ||
+                                metadataFor(widget.tableId, widget.measure)
+                                  ?.displayName ||
+                                widget.measure
+                              }
                               onPointClick={(value) =>
                                 applyVisualPoint(widget, value)
                               }
@@ -2482,12 +2697,35 @@ export default function Home() {
                     <NativeSelect
                       value={queryDraft.kind}
                       disabled={!canEdit}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const kind = event.target.value as QueryStep['kind'];
+                        const source = report.tables.find(
+                          (table) => table.id !== activeTable?.id,
+                        );
                         setQueryDraft((draft) => ({
                           ...draft,
-                          kind: event.target.value as QueryStep['kind'],
-                        }))
-                      }
+                          kind,
+                          name:
+                            kind === 'add-index'
+                              ? 'Index'
+                              : kind === 'unpivot-columns'
+                                ? 'Attribute'
+                                : kind === 'merge-table'
+                                  ? (source?.name ?? 'Merged')
+                                  : '',
+                          targetField:
+                            kind === 'unpivot-columns'
+                              ? 'Value'
+                              : (rawActiveFields.find(
+                                  (field) => field.kind === 'number',
+                                )?.name ?? ''),
+                          sourceTableId: source?.id,
+                          sourceField: inferFields(source?.rows ?? [])[0]?.name,
+                          fields: rawActiveFields
+                            .slice(0, 2)
+                            .map((field) => field.name),
+                        }));
+                      }}
                     >
                       <NativeSelectOption value="filter">
                         Filter rows
@@ -2519,6 +2757,18 @@ export default function Home() {
                       <NativeSelectOption value="group-by">
                         Group by
                       </NativeSelectOption>
+                      <NativeSelectOption value="append-table">
+                        Append table
+                      </NativeSelectOption>
+                      <NativeSelectOption value="merge-table">
+                        Merge tables
+                      </NativeSelectOption>
+                      <NativeSelectOption value="unpivot-columns">
+                        Unpivot columns
+                      </NativeSelectOption>
+                      <NativeSelectOption value="pivot-column">
+                        Pivot column
+                      </NativeSelectOption>
                     </NativeSelect>
                     {[
                       'filter',
@@ -2528,6 +2778,8 @@ export default function Home() {
                       'rename-column',
                       'split-column',
                       'group-by',
+                      'merge-table',
+                      'pivot-column',
                     ].includes(queryDraft.kind) && (
                       <NativeSelect
                         value={queryDraft.field}
@@ -2828,6 +3080,217 @@ export default function Home() {
                         />
                       </>
                     )}
+                    {['append-table', 'merge-table'].includes(
+                      queryDraft.kind,
+                    ) && (
+                      <NativeSelect
+                        aria-label="Query source table"
+                        value={queryDraft.sourceTableId ?? ''}
+                        disabled={!canEdit}
+                        onChange={(event) => {
+                          const sourceTableId = event.target.value;
+                          const source = report.tables.find(
+                            (table) => table.id === sourceTableId,
+                          );
+                          setQueryDraft((draft) => ({
+                            ...draft,
+                            sourceTableId,
+                            sourceField: inferFields(source?.rows ?? [])[0]
+                              ?.name,
+                            name:
+                              draft.kind === 'merge-table'
+                                ? (source?.name ?? 'Merged')
+                                : draft.name,
+                          }));
+                        }}
+                      >
+                        {report.tables
+                          .filter((table) => table.id !== activeTable.id)
+                          .map((table) => (
+                            <NativeSelectOption key={table.id} value={table.id}>
+                              {table.name}
+                            </NativeSelectOption>
+                          ))}
+                      </NativeSelect>
+                    )}
+                    {queryDraft.kind === 'merge-table' && (
+                      <>
+                        <NativeSelect
+                          aria-label="Query source join field"
+                          value={queryDraft.sourceField ?? ''}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              sourceField: event.target.value,
+                            }))
+                          }
+                        >
+                          {inferFields(
+                            report.tables.find(
+                              (table) => table.id === queryDraft.sourceTableId,
+                            )?.rows ?? [],
+                          ).map((field) => (
+                            <NativeSelectOption
+                              key={field.name}
+                              value={field.name}
+                            >
+                              {field.name}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                        <NativeSelect
+                          aria-label="Query join type"
+                          value={queryDraft.joinType ?? 'left'}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              joinType: event.target.value as 'left' | 'inner',
+                            }))
+                          }
+                        >
+                          <NativeSelectOption value="left">
+                            Left outer
+                          </NativeSelectOption>
+                          <NativeSelectOption value="inner">
+                            Inner
+                          </NativeSelectOption>
+                        </NativeSelect>
+                        <input
+                          className="form-input"
+                          aria-label="Merged column prefix"
+                          placeholder="Merged prefix"
+                          value={queryDraft.name}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              name: event.target.value,
+                            }))
+                          }
+                        />
+                      </>
+                    )}
+                    {queryDraft.kind === 'unpivot-columns' && (
+                      <>
+                        <div className="query-field-picker">
+                          {rawActiveFields.map((field) => (
+                            <label key={field.name}>
+                              <input
+                                type="checkbox"
+                                checked={queryDraft.fields?.includes(
+                                  field.name,
+                                )}
+                                disabled={!canEdit}
+                                onChange={(event) =>
+                                  setQueryDraft((draft) => ({
+                                    ...draft,
+                                    fields: event.target.checked
+                                      ? [...(draft.fields ?? []), field.name]
+                                      : (draft.fields ?? []).filter(
+                                          (candidate) =>
+                                            candidate !== field.name,
+                                        ),
+                                  }))
+                                }
+                              />
+                              {field.name}
+                            </label>
+                          ))}
+                        </div>
+                        <input
+                          className="form-input"
+                          aria-label="Unpivot attribute field"
+                          placeholder="Attribute field"
+                          value={queryDraft.name}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              name: event.target.value,
+                            }))
+                          }
+                        />
+                        <input
+                          className="form-input"
+                          aria-label="Unpivot value field"
+                          placeholder="Value field"
+                          value={queryDraft.targetField}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              targetField: event.target.value,
+                            }))
+                          }
+                        />
+                      </>
+                    )}
+                    {queryDraft.kind === 'pivot-column' && (
+                      <>
+                        <NativeSelect
+                          aria-label="Pivot value field"
+                          value={queryDraft.targetField}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              targetField: event.target.value,
+                            }))
+                          }
+                        >
+                          {rawActiveFields.map((field) => (
+                            <NativeSelectOption
+                              key={field.name}
+                              value={field.name}
+                            >
+                              {field.name}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                        <NativeSelect
+                          aria-label="Pivot aggregation"
+                          value={queryDraft.aggregation}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              aggregation: event.target.value as Aggregation,
+                            }))
+                          }
+                        >
+                          {[
+                            'sum',
+                            'average',
+                            'count',
+                            'minimum',
+                            'maximum',
+                            'distinct-count',
+                          ].map((aggregation) => (
+                            <NativeSelectOption
+                              key={aggregation}
+                              value={aggregation}
+                            >
+                              {aggregation.replace('-', ' ')}
+                            </NativeSelectOption>
+                          ))}
+                        </NativeSelect>
+                        <input
+                          className="form-input"
+                          aria-label="Pivot column prefix"
+                          placeholder="Optional prefix"
+                          value={queryDraft.name}
+                          disabled={!canEdit}
+                          onChange={(event) =>
+                            setQueryDraft((draft) => ({
+                              ...draft,
+                              name: event.target.value,
+                            }))
+                          }
+                        />
+                      </>
+                    )}
                     <Button
                       size="sm"
                       onClick={addQueryStep}
@@ -2843,7 +3306,9 @@ export default function Home() {
                         <div key={step.id}>
                           <span>{index + 1}</span>
                           <strong>{step.kind.replaceAll('-', ' ')}</strong>
-                          <small>{describeQueryStep(step)}</small>
+                          <small>
+                            {describeQueryStep(step, report.tables)}
+                          </small>
                           <label>
                             <input
                               type="checkbox"
@@ -3468,6 +3933,237 @@ export default function Home() {
 
                 <section className="model-section">
                   <div className="panel-title">
+                    <Settings2 />
+                    <div>
+                      <strong>Column metadata</strong>
+                      <small>
+                        Curate report-facing names, descriptions, data
+                        categories, formats, visibility, and sort order.
+                      </small>
+                    </div>
+                    <Badge variant="outline">
+                      {report.columnMetadata.length} curated
+                    </Badge>
+                  </div>
+                  <div className="metadata-form">
+                    <label>
+                      Table
+                      <NativeSelect
+                        aria-label="Metadata table"
+                        value={effectiveMetadataTableId}
+                        disabled={!canEdit}
+                        onChange={(event) => {
+                          const tableId = event.target.value;
+                          setMetadataSelection({
+                            tableId,
+                            field: fieldsFor(tableId)[0]?.name ?? '',
+                          });
+                        }}
+                      >
+                        {report.tables.map((table) => (
+                          <NativeSelectOption key={table.id} value={table.id}>
+                            {table.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </label>
+                    <label>
+                      Field
+                      <NativeSelect
+                        aria-label="Metadata field"
+                        value={effectiveMetadataField}
+                        disabled={!canEdit}
+                        onChange={(event) =>
+                          setMetadataSelection({
+                            tableId: effectiveMetadataTableId,
+                            field: event.target.value,
+                          })
+                        }
+                      >
+                        {metadataFields.map((field) => (
+                          <NativeSelectOption
+                            key={field.name}
+                            value={field.name}
+                          >
+                            {field.name}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </label>
+                    <label>
+                      Display name
+                      <input
+                        className="form-input"
+                        aria-label="Column display name"
+                        placeholder={effectiveMetadataField}
+                        value={activeColumnMetadata?.displayName ?? ''}
+                        disabled={!canEdit || !effectiveMetadataField}
+                        onChange={(event) =>
+                          setColumnMetadata(
+                            effectiveMetadataTableId,
+                            effectiveMetadataField,
+                            { displayName: event.target.value },
+                          )
+                        }
+                      />
+                    </label>
+                    <label>
+                      Data category
+                      <NativeSelect
+                        aria-label="Column data category"
+                        value={
+                          activeColumnMetadata?.category ?? 'uncategorized'
+                        }
+                        disabled={!canEdit || !effectiveMetadataField}
+                        onChange={(event) =>
+                          setColumnMetadata(
+                            effectiveMetadataTableId,
+                            effectiveMetadataField,
+                            {
+                              category: event.target
+                                .value as ColumnMetadata['category'],
+                            },
+                          )
+                        }
+                      >
+                        {[
+                          'uncategorized',
+                          'address',
+                          'place',
+                          'continent',
+                          'county',
+                          'city',
+                          'state-or-province',
+                          'country',
+                          'postal-code',
+                          'latitude',
+                          'longitude',
+                          'barcode',
+                          'web-url',
+                          'image-url',
+                        ].map((category) => (
+                          <NativeSelectOption key={category} value={category}>
+                            {category.replaceAll('-', ' ')}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </label>
+                    <label>
+                      Default format
+                      <NativeSelect
+                        aria-label="Column number format"
+                        value={activeColumnMetadata?.numberFormat ?? ''}
+                        disabled={!canEdit || !effectiveMetadataField}
+                        onChange={(event) =>
+                          setColumnMetadata(
+                            effectiveMetadataTableId,
+                            effectiveMetadataField,
+                            {
+                              numberFormat:
+                                (event.target.value as NumberFormat) ||
+                                undefined,
+                            },
+                          )
+                        }
+                      >
+                        <NativeSelectOption value="">
+                          Automatic
+                        </NativeSelectOption>
+                        {['compact', 'standard', 'currency', 'percent'].map(
+                          (format) => (
+                            <NativeSelectOption key={format} value={format}>
+                              {format}
+                            </NativeSelectOption>
+                          ),
+                        )}
+                      </NativeSelect>
+                    </label>
+                    <label>
+                      Sort by column
+                      <NativeSelect
+                        aria-label="Column sort by field"
+                        value={activeColumnMetadata?.sortByField ?? ''}
+                        disabled={!canEdit || !effectiveMetadataField}
+                        onChange={(event) =>
+                          setColumnMetadata(
+                            effectiveMetadataTableId,
+                            effectiveMetadataField,
+                            { sortByField: event.target.value || undefined },
+                          )
+                        }
+                      >
+                        <NativeSelectOption value="">
+                          Default
+                        </NativeSelectOption>
+                        {metadataFields
+                          .filter(
+                            (field) => field.name !== effectiveMetadataField,
+                          )
+                          .map((field) => (
+                            <NativeSelectOption
+                              key={field.name}
+                              value={field.name}
+                            >
+                              {field.name}
+                            </NativeSelectOption>
+                          ))}
+                      </NativeSelect>
+                    </label>
+                    <label className="metadata-description">
+                      Description
+                      <textarea
+                        className="form-input"
+                        aria-label="Column description"
+                        placeholder="Explain how report authors should use this field."
+                        value={activeColumnMetadata?.description ?? ''}
+                        disabled={!canEdit || !effectiveMetadataField}
+                        onChange={(event) =>
+                          setColumnMetadata(
+                            effectiveMetadataTableId,
+                            effectiveMetadataField,
+                            { description: event.target.value },
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="metadata-hidden">
+                      <input
+                        type="checkbox"
+                        checked={activeColumnMetadata?.hidden ?? false}
+                        disabled={!canEdit || !effectiveMetadataField}
+                        onChange={(event) =>
+                          setColumnMetadata(
+                            effectiveMetadataTableId,
+                            effectiveMetadataField,
+                            { hidden: event.target.checked },
+                          )
+                        }
+                      />
+                      Hide from visual field picker
+                    </label>
+                    <Button
+                      variant="outline"
+                      disabled={!canEdit || !activeColumnMetadata}
+                      onClick={() =>
+                        updateReport((current) => ({
+                          ...current,
+                          columnMetadata: current.columnMetadata.filter(
+                            (metadata) =>
+                              !(
+                                metadata.tableId === effectiveMetadataTableId &&
+                                metadata.field === effectiveMetadataField
+                              ),
+                          ),
+                        }))
+                      }
+                    >
+                      <Trash2 /> Reset metadata
+                    </Button>
+                  </div>
+                </section>
+
+                <section className="model-section">
+                  <div className="panel-title">
                     <Activity />
                     <div>
                       <strong>What-if parameters</strong>
@@ -4077,18 +4773,42 @@ export default function Home() {
                           {table.name}
                           <Badge variant="outline">{table.sourceKind}</Badge>
                         </header>
-                        {inferFields(table.rows).map((field) => (
-                          <p key={field.name}>
-                            <span>
-                              {field.kind === 'number'
-                                ? '#'
-                                : field.kind === 'date'
-                                  ? '◷'
-                                  : 'Aa'}
-                            </span>
-                            {field.name}
-                          </p>
-                        ))}
+                        {inferFields(table.rows).map((field) => {
+                          const metadata = metadataFor(table.id, field.name);
+                          return (
+                            <p
+                              key={field.name}
+                              className={metadata?.hidden ? 'hidden-field' : ''}
+                              title={metadata?.description || undefined}
+                            >
+                              <span>
+                                {field.kind === 'number'
+                                  ? '#'
+                                  : field.kind === 'date'
+                                    ? '◷'
+                                    : 'Aa'}
+                              </span>
+                              <span className="field-copy">
+                                <strong>
+                                  {metadata?.displayName || field.name}
+                                </strong>
+                                {metadata &&
+                                  (metadata.displayName ||
+                                    metadata.category !== 'uncategorized') && (
+                                    <small>
+                                      {metadata.displayName && field.name}
+                                      {metadata.displayName &&
+                                        metadata.category !== 'uncategorized' &&
+                                        ' · '}
+                                      {metadata.category !== 'uncategorized' &&
+                                        metadata.category.replaceAll('-', ' ')}
+                                    </small>
+                                  )}
+                              </span>
+                              {metadata?.hidden && <em>hidden</em>}
+                            </p>
+                          );
+                        })}
                         {report.calculatedFields
                           .filter((field) => field.tableId === table.id)
                           .map((field) => (
@@ -4526,11 +5246,15 @@ export default function Home() {
                         materialized.get(table.id) ?? table.rows,
                         0,
                         selectedWidget.pageId,
+                        report.columnMetadata,
                       );
                       updateWidget(selectedWidget.id, {
                         tableId: table.id,
                         dimension: next.dimension,
                         measure: next.measure,
+                        numberFormat:
+                          metadataFor(table.id, next.measure)?.numberFormat ??
+                          selectedWidget.numberFormat,
                       });
                     }}
                   >
@@ -4587,7 +5311,8 @@ export default function Home() {
                   >
                     {selectedFields.map((field) => (
                       <NativeSelectOption key={field.name} value={field.name}>
-                        {field.name}
+                        {metadataFor(selectedWidget.tableId, field.name)
+                          ?.displayName || field.name}
                       </NativeSelectOption>
                     ))}
                   </NativeSelect>
@@ -4638,13 +5363,19 @@ export default function Home() {
                       updateWidget(selectedWidget.id, {
                         measure: event.target.value,
                         numberFormat:
-                          measure?.numberFormat ?? selectedWidget.numberFormat,
+                          measure?.numberFormat ??
+                          metadataFor(
+                            selectedWidget.tableId,
+                            event.target.value,
+                          )?.numberFormat ??
+                          selectedWidget.numberFormat,
                       });
                     }}
                   >
                     {selectedNumericFields.map((field) => (
                       <NativeSelectOption key={field.name} value={field.name}>
-                        {field.name}
+                        {metadataFor(selectedWidget.tableId, field.name)
+                          ?.displayName || field.name}
                       </NativeSelectOption>
                     ))}
                     <NativeSelectOption value="__rows">
@@ -4679,7 +5410,8 @@ export default function Home() {
                     >
                       {selectedNumericFields.map((field) => (
                         <NativeSelectOption key={field.name} value={field.name}>
-                          {field.name}
+                          {metadataFor(selectedWidget.tableId, field.name)
+                            ?.displayName || field.name}
                         </NativeSelectOption>
                       ))}
                       {report.measures
@@ -4911,6 +5643,23 @@ export default function Home() {
                     </label>
                   </div>
                 )}
+                {selectedWidget.kind === 'slicer' && (
+                  <label>
+                    Sync slicer group
+                    <input
+                      className="form-input"
+                      aria-label="Sync slicer group"
+                      placeholder="e.g. geography"
+                      value={selectedWidget.syncGroup ?? ''}
+                      disabled={!canEdit}
+                      onChange={(event) =>
+                        updateWidget(selectedWidget.id, {
+                          syncGroup: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                )}
                 <div className="check-grid">
                   <label>
                     <input
@@ -4965,6 +5714,83 @@ export default function Home() {
                     Hide visual
                   </label>
                 </div>
+                {selectedWidget.interactions && (
+                  <div className="interaction-matrix">
+                    <header>
+                      <strong>Edit visual interactions</strong>
+                      <small>
+                        Choose which visuals receive filters from this source.
+                      </small>
+                    </header>
+                    {report.widgets
+                      .filter(
+                        (widget) =>
+                          widget.pageId === selectedWidget.pageId &&
+                          widget.id !== selectedWidget.id,
+                      )
+                      .map((target) => {
+                        const interaction = report.visualInteractions.find(
+                          (candidate) =>
+                            candidate.sourceWidgetId === selectedWidget.id &&
+                            candidate.targetWidgetId === target.id,
+                        );
+                        return (
+                          <label key={target.id}>
+                            <span>{target.title}</span>
+                            <NativeSelect
+                              size="sm"
+                              aria-label={`Interaction with ${target.title}`}
+                              value={interaction?.mode ?? 'filter'}
+                              disabled={!canEdit}
+                              onChange={(event) => {
+                                const mode = event.target.value as
+                                  | 'filter'
+                                  | 'none';
+                                updateReport((current) => ({
+                                  ...current,
+                                  visualInteractions:
+                                    mode === 'filter'
+                                      ? current.visualInteractions.filter(
+                                          (candidate) =>
+                                            !(
+                                              candidate.sourceWidgetId ===
+                                                selectedWidget.id &&
+                                              candidate.targetWidgetId ===
+                                                target.id
+                                            ),
+                                        )
+                                      : [
+                                          ...current.visualInteractions.filter(
+                                            (candidate) =>
+                                              !(
+                                                candidate.sourceWidgetId ===
+                                                  selectedWidget.id &&
+                                                candidate.targetWidgetId ===
+                                                  target.id
+                                              ),
+                                          ),
+                                          {
+                                            id: createId('interaction'),
+                                            sourceWidgetId: selectedWidget.id,
+                                            targetWidgetId: target.id,
+                                            mode,
+                                          },
+                                        ],
+                                }));
+                              }}
+                            >
+                              <NativeSelectOption value="filter">
+                                Filter
+                              </NativeSelectOption>
+                              <NativeSelectOption value="none">
+                                None
+                              </NativeSelectOption>
+                            </NativeSelect>
+                          </label>
+                        );
+                      })}
+                  </div>
+                )}
                 <div className="inspector-actions">
                   <Button
                     variant="outline"
