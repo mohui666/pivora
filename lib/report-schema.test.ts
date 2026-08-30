@@ -21,7 +21,7 @@ void test('upgrades schema v2 reports with pages, themes, and visual defaults', 
 
   const upgraded = upgradeReport(legacy);
 
-  assert.equal(upgraded.schemaVersion, 3);
+  assert.equal(upgraded.schemaVersion, 4);
   assert.equal(upgraded.pages[0].name, 'Overview');
   assert.equal(upgraded.widgets[0].pageId, upgraded.pages[0].id);
   assert.equal(upgraded.widgets[0].sortDirection, 'none');
@@ -29,11 +29,12 @@ void test('upgrades schema v2 reports with pages, themes, and visual defaults', 
   assert.equal(upgraded.widgets[0].topN, 20);
   assert.equal(upgraded.theme.id, 'ocean');
   assert.deepEqual(upgraded.measures, []);
+  assert.deepEqual(upgraded.roleRules, []);
 });
 
 void test('rejects unsupported report bundles', () => {
   assert.throws(
     () => upgradeReport({ schemaVersion: 99, tables: [], widgets: [] }),
-    /not a supported LocalLens BI report bundle/,
+    /not a supported Pivora report bundle/,
   );
 });

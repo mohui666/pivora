@@ -138,7 +138,7 @@ const widgets: ChartWidget[] = [
 export function createSampleReport(): ReportDocument {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id: createId('report'),
     name: 'Retail performance',
     createdAt: now,
@@ -172,6 +172,7 @@ export function createSampleReport(): ReportDocument {
     measures: [],
     transforms: [],
     querySteps: [],
+    roleRules: [],
     filters: [],
     widgets,
   };

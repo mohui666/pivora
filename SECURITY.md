@@ -12,6 +12,6 @@ Include a concise description, affected workflow, reproduction steps, impact, an
 
 ## Trust boundary
 
-LocalLens BI is designed to process data locally in the browser. Reports are stored in IndexedDB, and exported `.llbi` bundles include their report data. Owner, Editor, and Viewer modes are workflow controls rather than security boundaries.
+Pivora is designed to process data locally in the browser. Reports are stored in IndexedDB, and exported `.pivora` bundles include their report data. Owner, Editor, and Viewer modes are workflow controls rather than security boundaries.
 
 Any change that introduces network transmission, remote persistence, telemetry, or executable report content should be treated as a security-sensitive architectural change.

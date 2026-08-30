@@ -14,19 +14,19 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'LocalLens BI — Local-first analytics',
+  title: 'Pivora — Local-first analytics studio',
   description:
-    'Turn local CSV files into interactive dashboards without uploading your data.',
+    'Model local data, query it with SQL, and build interactive dashboards without uploading a row.',
   openGraph: {
-    title: 'LocalLens BI — Local-first analytics',
+    title: 'Pivora — Local-first analytics studio',
     description: 'Your data. Your device. Clear answers.',
-    images: ['/og.png'],
+    images: ['/pivora-og.png'],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'LocalLens BI — Local-first analytics',
+    title: 'Pivora — Local-first analytics studio',
     description: 'Your data. Your device. Clear answers.',
-    images: ['/og.png'],
+    images: ['/pivora-og.png'],
   },
 };
 

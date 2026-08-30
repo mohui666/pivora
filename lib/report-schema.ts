@@ -3,6 +3,7 @@ import type {
   ReportBookmark,
   ReportDocument,
   ReportPage,
+  RoleRule,
   ReportTheme,
 } from './bi-types';
 
@@ -42,28 +43,29 @@ export const REPORT_THEMES: ReportTheme[] = [
 type LegacyWidget = Omit<ChartWidget, 'pageId'> & { pageId?: string };
 type LegacyReport = Omit<
   ReportDocument,
-  'schemaVersion' | 'pages' | 'bookmarks' | 'theme' | 'widgets'
+  'schemaVersion' | 'pages' | 'bookmarks' | 'theme' | 'widgets' | 'roleRules'
 > & {
-  schemaVersion: 2 | 3;
+  schemaVersion: 2 | 3 | 4;
   pages?: ReportPage[];
   bookmarks?: ReportBookmark[];
   theme?: ReportTheme;
   widgets: LegacyWidget[];
   querySteps?: ReportDocument['querySteps'];
   measures?: ReportDocument['measures'];
+  roleRules?: RoleRule[];
 };
 
 export function upgradeReport(value: unknown): ReportDocument {
   if (!value || typeof value !== 'object') {
-    throw new Error('This is not a LocalLens BI report bundle.');
+    throw new Error('This is not a Pivora report bundle.');
   }
   const candidate = value as Record<string, unknown>;
   if (
-    (candidate.schemaVersion !== 2 && candidate.schemaVersion !== 3) ||
+    ![2, 3, 4].includes(Number(candidate.schemaVersion)) ||
     !Array.isArray(candidate.tables) ||
     !Array.isArray(candidate.widgets)
   ) {
-    throw new Error('This is not a supported LocalLens BI report bundle.');
+    throw new Error('This is not a supported Pivora report bundle.');
   }
 
   const legacy = value as LegacyReport;
@@ -92,7 +94,7 @@ export function upgradeReport(value: unknown): ReportDocument {
 
   return {
     ...legacy,
-    schemaVersion: 3,
+    schemaVersion: 4,
     pages,
     bookmarks: legacy.bookmarks ?? [],
     theme: legacy.theme ?? REPORT_THEMES[0],
@@ -108,6 +110,7 @@ export function upgradeReport(value: unknown): ReportDocument {
     })),
     querySteps: legacy.querySteps ?? [],
     measures: legacy.measures ?? [],
+    roleRules: legacy.roleRules ?? [],
     widgets,
   };
 }

@@ -1,0 +1,5 @@
+[
+  { "channel": "Direct", "orders": 128, "revenue": 48200 },
+  { "channel": "Partner", "orders": 94, "revenue": 37150 },
+  { "channel": "Marketplace", "orders": 163, "revenue": 55980 }
+]

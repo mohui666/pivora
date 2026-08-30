@@ -13,6 +13,8 @@ import type {
   QueryStep,
   Relationship,
   ReportFilter,
+  ReportRole,
+  RoleRule,
 } from './bi-types';
 
 const parser = new Parser({
@@ -102,6 +104,26 @@ function compareValues(left: DataRow[string], right: DataRow[string]): number {
   });
 }
 
+function matchesOperator(
+  cell: DataRow[string],
+  operator: QueryStep['operator'],
+  target: string,
+): boolean {
+  const blank = cell === null || cell === undefined || cell === '';
+  if (operator === 'is-blank') return blank;
+  if (operator === 'not-blank') return !blank;
+  if (operator === 'contains') {
+    return String(cell ?? '')
+      .toLocaleLowerCase()
+      .includes(target.toLocaleLowerCase());
+  }
+  const comparison = compareValues(cell, target);
+  if (operator === 'not-equals') return comparison !== 0;
+  if (operator === 'greater-than') return comparison > 0;
+  if (operator === 'less-than') return comparison < 0;
+  return comparison === 0;
+}
+
 export function applyQuerySteps(
   rows: DataRow[],
   tableId: string,
@@ -112,22 +134,9 @@ export function applyQuerySteps(
     (candidate) => candidate.tableId === tableId && candidate.enabled,
   )) {
     if (step.kind === 'filter') {
-      result = result.filter((row) => {
-        const cell = row[step.field];
-        const blank = cell === null || cell === undefined || cell === '';
-        if (step.operator === 'is-blank') return blank;
-        if (step.operator === 'not-blank') return !blank;
-        if (step.operator === 'contains') {
-          return String(cell ?? '')
-            .toLocaleLowerCase()
-            .includes(step.value.toLocaleLowerCase());
-        }
-        const comparison = compareValues(cell, step.value);
-        if (step.operator === 'not-equals') return comparison !== 0;
-        if (step.operator === 'greater-than') return comparison > 0;
-        if (step.operator === 'less-than') return comparison < 0;
-        return comparison === 0;
-      });
+      result = result.filter((row) =>
+        matchesOperator(row[step.field], step.operator, step.value),
+      );
     } else if (step.kind === 'sort') {
       const direction = step.direction === 'ascending' ? 1 : -1;
       result = [...result].sort(
@@ -370,17 +379,33 @@ export function filterRows(
   filters: ReportFilter[],
   tableId: string,
   tables: DataTable[],
+  roleRules: RoleRule[] = [],
+  role: ReportRole = 'owner',
 ): DataRow[] {
-  if (!filters.length) return rows;
-  return rows.filter((row) =>
-    filters.every((filter) => {
-      const source = tables.find((table) => table.id === filter.tableId);
-      const key =
-        filter.tableId === tableId
-          ? filter.field
-          : `${source?.name}.${filter.field}`;
-      return String(row[key] ?? 'Blank') === filter.value;
-    }),
+  const activeRoleRules =
+    role === 'owner'
+      ? []
+      : roleRules.filter((rule) => rule.enabled && rule.role === role);
+  if (!filters.length && !activeRoleRules.length) return rows;
+  return rows.filter(
+    (row) =>
+      filters.every((filter) => {
+        const source = tables.find((table) => table.id === filter.tableId);
+        const key =
+          filter.tableId === tableId
+            ? filter.field
+            : `${source?.name}.${filter.field}`;
+        return String(row[key] ?? 'Blank') === filter.value;
+      }) &&
+      activeRoleRules.every((rule) => {
+        const source = tables.find((table) => table.id === rule.tableId);
+        const key =
+          rule.tableId === tableId
+            ? rule.field
+            : `${source?.name}.${rule.field}`;
+        if (rule.tableId !== tableId && !(key in row)) return true;
+        return matchesOperator(row[key], rule.operator, rule.value);
+      }),
   );
 }
 
@@ -409,4 +434,109 @@ export function validateRelationship(
     return 'The right key does not exist.';
   }
   return null;
+}
+
+export type RelationshipDiagnostic = {
+  status: 'healthy' | 'warning' | 'invalid';
+  cardinalityValid: boolean;
+  leftRows: number;
+  rightRows: number;
+  leftDistinct: number;
+  rightDistinct: number;
+  leftDuplicates: number;
+  rightDuplicates: number;
+  leftNulls: number;
+  rightNulls: number;
+  unmatchedLeft: number;
+  unmatchedRight: number;
+  matchRate: number;
+  issues: string[];
+};
+
+function relationshipKey(value: DataRow[string]): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  return String(value).trim();
+}
+
+export function analyzeRelationship(
+  relationship: Relationship,
+  tables: DataTable[],
+): RelationshipDiagnostic {
+  const left = tables.find((table) => table.id === relationship.leftTableId);
+  const right = tables.find((table) => table.id === relationship.rightTableId);
+  if (!left || !right) {
+    return {
+      status: 'invalid',
+      cardinalityValid: false,
+      leftRows: left?.rows.length ?? 0,
+      rightRows: right?.rows.length ?? 0,
+      leftDistinct: 0,
+      rightDistinct: 0,
+      leftDuplicates: 0,
+      rightDuplicates: 0,
+      leftNulls: 0,
+      rightNulls: 0,
+      unmatchedLeft: 0,
+      unmatchedRight: 0,
+      matchRate: 0,
+      issues: ['A related table is missing.'],
+    };
+  }
+
+  const leftKeys = left.rows.map((row) =>
+    relationshipKey(row[relationship.leftField]),
+  );
+  const rightKeys = right.rows.map((row) =>
+    relationshipKey(row[relationship.rightField]),
+  );
+  const leftNonNull = leftKeys.filter((key): key is string => key !== null);
+  const rightNonNull = rightKeys.filter((key): key is string => key !== null);
+  const leftSet = new Set(leftNonNull);
+  const rightSet = new Set(rightNonNull);
+  const leftDuplicates = leftNonNull.length - leftSet.size;
+  const rightDuplicates = rightNonNull.length - rightSet.size;
+  const leftNulls = leftKeys.length - leftNonNull.length;
+  const rightNulls = rightKeys.length - rightNonNull.length;
+  const unmatchedLeft = leftNonNull.filter((key) => !rightSet.has(key)).length;
+  const unmatchedRight = rightNonNull.filter((key) => !leftSet.has(key)).length;
+  const leftUnique = leftDuplicates === 0 && leftNulls === 0;
+  const rightUnique = rightDuplicates === 0 && rightNulls === 0;
+  const cardinality = relationship.cardinality ?? 'many-to-one';
+  const cardinalityValid =
+    cardinality === 'many-to-many' ||
+    (cardinality === 'many-to-one' && rightUnique) ||
+    (cardinality === 'one-to-many' && leftUnique) ||
+    (cardinality === 'one-to-one' && leftUnique && rightUnique);
+  const issues: string[] = [];
+  if (!cardinalityValid) {
+    issues.push(`Key uniqueness does not satisfy ${cardinality}.`);
+  }
+  if (leftNulls || rightNulls) {
+    issues.push(`${leftNulls + rightNulls} blank key value(s).`);
+  }
+  if (unmatchedLeft || unmatchedRight) {
+    issues.push(`${unmatchedLeft + unmatchedRight} unmatched key value(s).`);
+  }
+  const matchedLeft = leftNonNull.length - unmatchedLeft;
+  const matchRate = leftNonNull.length ? matchedLeft / leftNonNull.length : 0;
+  return {
+    status: !cardinalityValid
+      ? 'invalid'
+      : issues.length
+        ? 'warning'
+        : 'healthy',
+    cardinalityValid,
+    leftRows: left.rows.length,
+    rightRows: right.rows.length,
+    leftDistinct: leftSet.size,
+    rightDistinct: rightSet.size,
+    leftDuplicates,
+    rightDuplicates,
+    leftNulls,
+    rightNulls,
+    unmatchedLeft,
+    unmatchedRight,
+    matchRate,
+    issues,
+  };
 }

@@ -15,6 +15,7 @@ import {
   FileSpreadsheet,
   Filter,
   FolderOpen,
+  Globe2,
   GripHorizontal,
   ImageDown,
   LayoutDashboard,
@@ -30,6 +31,7 @@ import {
   Save,
   Settings2,
   Share2,
+  SquareTerminal,
   Sun,
   Table2,
   Trash2,
@@ -66,8 +68,10 @@ import {
   type QuickCalculation,
 } from '@/lib/analytics';
 import {
+  analyzeRelationship,
   createId,
   filterRows,
+  makeTable,
   materializedFields,
   materializeTable,
   validateCalculatedExpression,
@@ -86,6 +90,7 @@ import type {
   ReportPage,
   ReportRole,
   ReportSummary,
+  RoleRule,
   SemanticMeasure,
 } from '@/lib/bi-types';
 import { parseDataFile } from '@/lib/data-import';
@@ -97,8 +102,9 @@ import {
   saveReport,
 } from '@/lib/report-storage';
 import { createSampleReport } from '@/lib/sample-report';
+import type { LocalSqlResult } from '@/lib/duckdb-engine';
 
-type View = 'dashboard' | 'data' | 'model';
+type View = 'dashboard' | 'data' | 'model' | 'sql';
 type LocalFileHandle = { name: string; getFile: () => Promise<File> };
 type VisualPerformance = {
   durationMs: number;
@@ -197,6 +203,18 @@ export default function Home() {
   const [savedReports, setSavedReports] = useState<ReportSummary[]>([]);
   const [dataPage, setDataPage] = useState(0);
   const [dataSearch, setDataSearch] = useState('');
+  const [sqlText, setSqlText] = useState(
+    'SELECT region, SUM(revenue) AS revenue\nFROM "Sales"\nGROUP BY region\nORDER BY revenue DESC',
+  );
+  const [sqlResult, setSqlResult] = useState<LocalSqlResult>();
+  const [sqlError, setSqlError] = useState('');
+  const [sqlRunning, setSqlRunning] = useState(false);
+  const [sqlHistory, setSqlHistory] = useState<string[]>([]);
+  const [showWebConnector, setShowWebConnector] = useState(false);
+  const [webUrl, setWebUrl] = useState('');
+  const [webTableName, setWebTableName] = useState('');
+  const [webHeaders, setWebHeaders] = useState('');
+  const [webLoading, setWebLoading] = useState(false);
   const [relationDraft, setRelationDraft] = useState<Omit<Relationship, 'id'>>({
     leftTableId: 'table_sales',
     leftField: 'product_id',
@@ -205,6 +223,15 @@ export default function Home() {
     cardinality: 'many-to-one',
     crossFilterDirection: 'single',
     active: true,
+  });
+  const [roleRuleDraft, setRoleRuleDraft] = useState<
+    Omit<RoleRule, 'id' | 'enabled'>
+  >({
+    role: 'viewer',
+    tableId: 'table_sales',
+    field: 'region',
+    operator: 'equals',
+    value: 'North',
   });
   const [calcDraft, setCalcDraft] = useState({
     tableId: 'table_sales',
@@ -471,13 +498,31 @@ export default function Home() {
     [materialized],
   );
 
+  const relationshipDiagnostics = useMemo(
+    () =>
+      new Map(
+        report.relationships.map((relationship) => [
+          relationship.id,
+          analyzeRelationship(relationship, report.tables),
+        ]),
+      ),
+    [report.relationships, report.tables],
+  );
+
   const pointsFor = useCallback(
     (widget: ChartWidget) => {
       const rows = materialized.get(widget.tableId) ?? [];
       const filters = report.filters.filter(
         (filter) => filter.sourceWidgetId !== widget.id,
       );
-      const filtered = filterRows(rows, filters, widget.tableId, report.tables);
+      const filtered = filterRows(
+        rows,
+        filters,
+        widget.tableId,
+        report.tables,
+        report.roleRules,
+        report.role,
+      );
       const dimension = effectiveDimension(widget);
       const dimensionKind =
         fieldsFor(widget.tableId).find((field) => field.name === dimension)
@@ -502,7 +547,15 @@ export default function Home() {
       }
       return points.slice(0, Math.max(1, widget.topN ?? 20));
     },
-    [fieldsFor, materialized, report.filters, report.measures, report.tables],
+    [
+      fieldsFor,
+      materialized,
+      report.filters,
+      report.measures,
+      report.role,
+      report.roleRules,
+      report.tables,
+    ],
   );
 
   function openPerformanceAnalyzer() {
@@ -599,6 +652,95 @@ export default function Home() {
       showNotice(error instanceof Error ? error.message : 'Import failed.');
     } finally {
       setImporting(false);
+    }
+  }
+
+  async function importWebSource() {
+    if (!canEdit || !webUrl.trim()) return;
+    setWebLoading(true);
+    try {
+      const parsedUrl = new URL(webUrl.trim());
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+        throw new Error('Web connectors require an HTTP or HTTPS URL.');
+      }
+
+      let headers: Record<string, string> | undefined;
+      if (webHeaders.trim()) {
+        const candidate = JSON.parse(webHeaders) as unknown;
+        if (
+          !candidate ||
+          typeof candidate !== 'object' ||
+          Array.isArray(candidate) ||
+          Object.values(candidate).some((value) => typeof value !== 'string')
+        ) {
+          throw new Error('Request headers must be a JSON object of strings.');
+        }
+        headers = candidate as Record<string, string>;
+      }
+
+      const response = await fetch(parsedUrl, {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        throw new Error(`Web source returned HTTP ${response.status}.`);
+      }
+      const contentType = response.headers.get('content-type') ?? '';
+      const body = await response.text();
+      const trimmed = body.trimStart();
+      const extension =
+        contentType.includes('json') || /^[{[]/.test(trimmed)
+          ? 'json'
+          : contentType.includes('xml') || trimmed.startsWith('<')
+            ? 'xml'
+            : 'csv';
+      const pathName = parsedUrl.pathname.split('/').filter(Boolean).at(-1);
+      const fileName = `${webTableName.trim() || pathName?.replace(/\.[^.]+$/, '') || 'web-data'}.${extension}`;
+      const file = new File([body], fileName, { type: contentType });
+      const sourceLabel = `${parsedUrl.origin}${parsedUrl.pathname}`;
+      const parsedTables = await parseDataFile(file);
+      const imported = parsedTables.map((table) => ({
+        ...table,
+        name:
+          webTableName.trim() && parsedTables.length > 1
+            ? `${webTableName.trim()} · ${table.name}`
+            : webTableName.trim() || table.name,
+        sourceKind: 'web' as const,
+        sourceName: sourceLabel,
+      }));
+      const firstExisting = report.tables.find(
+        (table) =>
+          table.sourceName === sourceLabel && table.name === imported[0]?.name,
+      );
+
+      updateReport((current) => {
+        const importedNames = new Set(imported.map((table) => table.name));
+        const retained = current.tables.filter(
+          (table) =>
+            table.sourceName !== sourceLabel || !importedNames.has(table.name),
+        );
+        const reconciled = imported.map((table) => {
+          const existing = current.tables.find(
+            (candidate) =>
+              candidate.sourceName === sourceLabel &&
+              candidate.name === table.name,
+          );
+          return existing ? { ...table, id: existing.id } : table;
+        });
+        return { ...current, tables: [...retained, ...reconciled] };
+      });
+      setActiveTableId(firstExisting?.id ?? imported[0]?.id ?? activeTableId);
+      setShowWebConnector(false);
+      showNotice(
+        `Fetched ${imported.length} web table(s), ${imported.reduce((sum, table) => sum + table.rows.length, 0).toLocaleString()} rows.`,
+      );
+    } catch (error) {
+      showNotice(
+        error instanceof Error ? error.message : 'Web source import failed.',
+      );
+    } finally {
+      setWebLoading(false);
     }
   }
 
@@ -870,6 +1012,21 @@ export default function Home() {
     );
   }
 
+  function addRoleRule() {
+    if (!canManage) return showNotice('Switch to Owner to manage role rules.');
+    if (!roleRuleDraft.field) return showNotice('Choose a field for the rule.');
+    const rule: RoleRule = {
+      id: createId('role-rule'),
+      ...roleRuleDraft,
+      enabled: true,
+    };
+    updateReport((current) => ({
+      ...current,
+      roleRules: [...current.roleRules, rule],
+    }));
+    showNotice('Role row rule added. Switch role mode to preview it.');
+  }
+
   function addCalculatedField() {
     const error = validateCalculatedExpression(calcDraft.expression);
     if (!calcDraft.name.trim()) return showNotice('Name the calculated field.');
@@ -948,7 +1105,7 @@ export default function Home() {
   function exportReport() {
     downloadBlob(
       new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
-      `${report.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.llbi`,
+      `${report.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.pivora`,
     );
   }
 
@@ -1051,7 +1208,68 @@ export default function Home() {
     }
   }
 
-  const activeRows = materialized.get(activeTable?.id ?? '') ?? [];
+  async function executeLocalSql() {
+    setSqlRunning(true);
+    setSqlError('');
+    try {
+      const { runLocalSql } = await import('@/lib/duckdb-engine');
+      const tables = report.tables.map((table) => ({
+        ...table,
+        rows: filterRows(
+          materialized.get(table.id) ?? table.rows,
+          [],
+          table.id,
+          report.tables,
+          report.roleRules,
+          report.role,
+        ),
+      }));
+      const result = await runLocalSql(tables, sqlText);
+      setSqlResult(result);
+      setSqlHistory((history) =>
+        [sqlText, ...history.filter((query) => query !== sqlText)].slice(0, 12),
+      );
+    } catch (error) {
+      setSqlResult(undefined);
+      setSqlError(error instanceof Error ? error.message : 'SQL query failed.');
+    } finally {
+      setSqlRunning(false);
+    }
+  }
+
+  function addSqlResultToModel() {
+    if (!sqlResult?.rows.length || !canEdit) return;
+    const table = makeTable({
+      name: `SQL Result ${report.tables.filter((item) => item.sourceKind === 'sql').length + 1}`,
+      rows: sqlResult.rows,
+      sourceKind: 'sql',
+      sourceName: 'DuckDB local query',
+    });
+    updateReport((current) => ({
+      ...current,
+      tables: [...current.tables, table],
+    }));
+    setActiveTableId(table.id);
+    setView('data');
+    showNotice('SQL result added as a reusable local table.');
+  }
+
+  async function resetSqlEngine() {
+    const { resetLocalSqlEngine } = await import('@/lib/duckdb-engine');
+    await resetLocalSqlEngine();
+    setSqlResult(undefined);
+    setSqlError('');
+    showNotice('DuckDB local engine reset.');
+  }
+
+  const activeRows = filterRows(
+    materialized.get(activeTable?.id ?? '') ?? [],
+    [],
+    activeTable?.id ?? '',
+    report.tables,
+    report.roleRules,
+    report.role,
+  );
   const activeFields = materializedFields(activeRows);
   const searchedRows = dataSearch
     ? activeRows.filter((row) =>
@@ -1106,18 +1324,18 @@ export default function Home() {
       <input
         ref={reportInput}
         type="file"
-        accept=".llbi,application/json"
+        accept=".pivora,.llbi,application/json"
         className="sr-only"
         onChange={(event) => void importReport(event.target.files?.[0])}
       />
 
       <header className="bi-header">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span className="brand-mark">L</span>
+          <span className="brand-mark">P</span>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">LocalLens BI</p>
+            <p className="truncate text-sm font-semibold">Pivora</p>
             <p className="hidden text-[9px] font-bold tracking-[.13em] text-muted-foreground sm:block">
-              LOCAL ANALYTICS STUDIO
+              LOCAL-FIRST ANALYTICS
             </p>
           </div>
         </div>
@@ -1247,6 +1465,13 @@ export default function Home() {
             >
               <Link2 />
               Model
+            </button>
+            <button
+              className={`nav-item ${view === 'sql' ? 'nav-item-active' : ''}`}
+              onClick={() => setView('sql')}
+            >
+              <SquareTerminal />
+              SQL workbench
             </button>
           </nav>
 
@@ -1711,8 +1936,78 @@ export default function Home() {
                     <FolderOpen />
                     Add folder
                   </Button>
+                  <Button
+                    variant={showWebConnector ? 'secondary' : 'outline'}
+                    size="sm"
+                    onClick={() => setShowWebConnector((visible) => !visible)}
+                    disabled={!canEdit}
+                  >
+                    <Globe2 />
+                    Web / API
+                  </Button>
                 </div>
               </div>
+
+              {showWebConnector && (
+                <section className="web-connector-panel">
+                  <div className="panel-title">
+                    <Globe2 />
+                    <div>
+                      <strong>Web & API connector</strong>
+                      <small>
+                        Explicit browser GET for JSON, CSV, or XML endpoints
+                      </small>
+                    </div>
+                  </div>
+                  <label>
+                    Source URL
+                    <input
+                      className="form-input"
+                      type="url"
+                      placeholder="https://api.example.com/data.json"
+                      value={webUrl}
+                      onChange={(event) => setWebUrl(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Table name
+                    <input
+                      className="form-input"
+                      placeholder="Optional friendly name"
+                      value={webTableName}
+                      onChange={(event) => setWebTableName(event.target.value)}
+                    />
+                  </label>
+                  <label className="web-header-field">
+                    Session-only request headers
+                    <textarea
+                      className="form-input font-mono"
+                      aria-label="Web request headers"
+                      placeholder={'{"Authorization":"Bearer …"}'}
+                      value={webHeaders}
+                      onChange={(event) => setWebHeaders(event.target.value)}
+                    />
+                  </label>
+                  <div className="web-connector-actions">
+                    <p>
+                      Headers are never saved in the report. The endpoint must
+                      allow browser CORS; fetched rows stay in this local model.
+                    </p>
+                    <Button
+                      size="sm"
+                      onClick={() => void importWebSource()}
+                      disabled={webLoading || !webUrl.trim()}
+                    >
+                      {webLoading ? (
+                        <LoaderCircle className="animate-spin" />
+                      ) : (
+                        <Globe2 />
+                      )}
+                      Fetch source
+                    </Button>
+                  </div>
+                </section>
+              )}
 
               <div className="data-prep-grid">
                 <section className="prep-panel query-steps-panel">
@@ -2453,59 +2748,300 @@ export default function Home() {
                     </Button>
                   </div>
                   <div className="model-list">
-                    {report.relationships.map((relation) => (
-                      <div key={relation.id}>
-                        <Link2 />
+                    {report.relationships.map((relation) => {
+                      const diagnostic = relationshipDiagnostics.get(
+                        relation.id,
+                      );
+                      return (
+                        <div key={relation.id}>
+                          <Link2 />
+                          <span>
+                            <strong>
+                              {
+                                report.tables.find(
+                                  (table) => table.id === relation.leftTableId,
+                                )?.name
+                              }
+                              .{relation.leftField}
+                            </strong>
+                            <small>
+                              {relation.cardinality ?? 'many-to-one'} ·{' '}
+                              {relation.crossFilterDirection ?? 'single'} ·
+                              matches{' '}
+                              {
+                                report.tables.find(
+                                  (table) => table.id === relation.rightTableId,
+                                )?.name
+                              }
+                              .{relation.rightField}
+                            </small>
+                          </span>
+                          {diagnostic && (
+                            <div
+                              className="relationship-diagnostics"
+                              title={
+                                diagnostic.issues.join(' ') ||
+                                'Healthy relationship'
+                              }
+                            >
+                              <Badge
+                                variant={
+                                  diagnostic.status === 'invalid'
+                                    ? 'destructive'
+                                    : diagnostic.status === 'warning'
+                                      ? 'outline'
+                                      : 'secondary'
+                                }
+                              >
+                                {diagnostic.status}
+                              </Badge>
+                              <small>
+                                {(diagnostic.matchRate * 100).toFixed(0)}%
+                                matched
+                              </small>
+                              {!diagnostic.cardinalityValid &&
+                                (diagnostic.leftDuplicates > 0 ||
+                                  diagnostic.rightDuplicates > 0) && (
+                                  <small>
+                                    {diagnostic.leftDuplicates +
+                                      diagnostic.rightDuplicates}{' '}
+                                    duplicates
+                                  </small>
+                                )}
+                              {(diagnostic.unmatchedLeft > 0 ||
+                                diagnostic.unmatchedRight > 0) && (
+                                <small>
+                                  {diagnostic.unmatchedLeft +
+                                    diagnostic.unmatchedRight}{' '}
+                                  unmatched
+                                </small>
+                              )}
+                            </div>
+                          )}
+                          <label className="relationship-active-toggle">
+                            <input
+                              type="checkbox"
+                              checked={relation.active ?? true}
+                              disabled={!canEdit}
+                              onChange={(event) =>
+                                updateReport((current) => ({
+                                  ...current,
+                                  relationships: current.relationships.map(
+                                    (candidate) =>
+                                      candidate.id === relation.id
+                                        ? {
+                                            ...candidate,
+                                            active: event.target.checked,
+                                          }
+                                        : candidate,
+                                  ),
+                                }))
+                              }
+                            />
+                            Active
+                          </label>
+                          {canEdit && (
+                            <button
+                              onClick={() =>
+                                updateReport((current) => ({
+                                  ...current,
+                                  relationships: current.relationships.filter(
+                                    (candidate) => candidate.id !== relation.id,
+                                  ),
+                                }))
+                              }
+                            >
+                              <Trash2 />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <section className="model-section">
+                  <div className="panel-title">
+                    <LockKeyhole />
+                    <div>
+                      <strong>Role row rules</strong>
+                      <small>
+                        Local row-level security preview for Editor and Viewer
+                      </small>
+                    </div>
+                    <Badge
+                      variant={
+                        report.role === 'owner' ? 'outline' : 'secondary'
+                      }
+                    >
+                      Previewing {report.role}
+                    </Badge>
+                  </div>
+                  <div className="role-rule-form">
+                    <NativeSelect
+                      aria-label="Rule role"
+                      value={roleRuleDraft.role}
+                      disabled={!canManage}
+                      onChange={(event) =>
+                        setRoleRuleDraft((draft) => ({
+                          ...draft,
+                          role: event.target.value as RoleRule['role'],
+                        }))
+                      }
+                    >
+                      <NativeSelectOption value="viewer">
+                        Viewer
+                      </NativeSelectOption>
+                      <NativeSelectOption value="editor">
+                        Editor
+                      </NativeSelectOption>
+                    </NativeSelect>
+                    <NativeSelect
+                      aria-label="Rule table"
+                      value={roleRuleDraft.tableId}
+                      disabled={!canManage}
+                      onChange={(event) => {
+                        const tableId = event.target.value;
+                        setRoleRuleDraft((draft) => ({
+                          ...draft,
+                          tableId,
+                          field:
+                            inferFields(
+                              report.tables.find(
+                                (table) => table.id === tableId,
+                              )?.rows ?? [],
+                            )[0]?.name ?? '',
+                        }));
+                      }}
+                    >
+                      {report.tables.map((table) => (
+                        <NativeSelectOption key={table.id} value={table.id}>
+                          {table.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <NativeSelect
+                      aria-label="Rule field"
+                      value={roleRuleDraft.field}
+                      disabled={!canManage}
+                      onChange={(event) =>
+                        setRoleRuleDraft((draft) => ({
+                          ...draft,
+                          field: event.target.value,
+                        }))
+                      }
+                    >
+                      {inferFields(
+                        report.tables.find(
+                          (table) => table.id === roleRuleDraft.tableId,
+                        )?.rows ?? [],
+                      ).map((field) => (
+                        <NativeSelectOption key={field.name} value={field.name}>
+                          {field.name}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <NativeSelect
+                      aria-label="Rule operator"
+                      value={roleRuleDraft.operator}
+                      disabled={!canManage}
+                      onChange={(event) =>
+                        setRoleRuleDraft((draft) => ({
+                          ...draft,
+                          operator: event.target.value as RoleRule['operator'],
+                        }))
+                      }
+                    >
+                      {[
+                        'equals',
+                        'not-equals',
+                        'contains',
+                        'greater-than',
+                        'less-than',
+                        'is-blank',
+                        'not-blank',
+                      ].map((operator) => (
+                        <NativeSelectOption key={operator} value={operator}>
+                          {operator.replaceAll('-', ' ')}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                    <input
+                      className="form-input"
+                      aria-label="Rule value"
+                      placeholder="Allowed value"
+                      value={roleRuleDraft.value}
+                      disabled={
+                        !canManage ||
+                        ['is-blank', 'not-blank'].includes(
+                          roleRuleDraft.operator,
+                        )
+                      }
+                      onChange={(event) =>
+                        setRoleRuleDraft((draft) => ({
+                          ...draft,
+                          value: event.target.value,
+                        }))
+                      }
+                    />
+                    <Button onClick={addRoleRule} disabled={!canManage}>
+                      <Plus /> Add rule
+                    </Button>
+                  </div>
+                  <div className="role-rule-note">
+                    Owner bypasses row rules. Header values are a local preview,
+                    not an authentication boundary.
+                  </div>
+                  <div className="model-list">
+                    {report.roleRules.map((rule) => (
+                      <div key={rule.id}>
+                        <LockKeyhole />
                         <span>
                           <strong>
+                            {rule.role} ·{' '}
                             {
                               report.tables.find(
-                                (table) => table.id === relation.leftTableId,
+                                (table) => table.id === rule.tableId,
                               )?.name
                             }
-                            .{relation.leftField}
+                            .{rule.field}
                           </strong>
                           <small>
-                            {relation.cardinality ?? 'many-to-one'} ·{' '}
-                            {relation.crossFilterDirection ?? 'single'} ·
-                            matches{' '}
-                            {
-                              report.tables.find(
-                                (table) => table.id === relation.rightTableId,
-                              )?.name
-                            }
-                            .{relation.rightField}
+                            {rule.operator.replaceAll('-', ' ')}{' '}
+                            {!['is-blank', 'not-blank'].includes(rule.operator)
+                              ? rule.value
+                              : ''}
                           </small>
                         </span>
                         <label className="relationship-active-toggle">
                           <input
                             type="checkbox"
-                            checked={relation.active ?? true}
-                            disabled={!canEdit}
+                            checked={rule.enabled}
+                            disabled={!canManage}
                             onChange={(event) =>
                               updateReport((current) => ({
                                 ...current,
-                                relationships: current.relationships.map(
-                                  (candidate) =>
-                                    candidate.id === relation.id
-                                      ? {
-                                          ...candidate,
-                                          active: event.target.checked,
-                                        }
-                                      : candidate,
+                                roleRules: current.roleRules.map((candidate) =>
+                                  candidate.id === rule.id
+                                    ? {
+                                        ...candidate,
+                                        enabled: event.target.checked,
+                                      }
+                                    : candidate,
                                 ),
                               }))
                             }
                           />
-                          Active
+                          Enabled
                         </label>
-                        {canEdit && (
+                        {canManage && (
                           <button
+                            aria-label="Delete role rule"
                             onClick={() =>
                               updateReport((current) => ({
                                 ...current,
-                                relationships: current.relationships.filter(
-                                  (candidate) => candidate.id !== relation.id,
+                                roleRules: current.roleRules.filter(
+                                  (candidate) => candidate.id !== rule.id,
                                 ),
                               }))
                             }
@@ -2820,6 +3356,222 @@ export default function Home() {
                       </article>
                     ))}
                   </div>
+                </section>
+              </div>
+            </div>
+          )}
+
+          {view === 'sql' && (
+            <div className="sql-page">
+              <div className="page-toolbar">
+                <div>
+                  <p className="eyebrow">Local query engine</p>
+                  <h1>SQL workbench</h1>
+                  <p>
+                    Query materialized report tables with DuckDB-WASM. The
+                    engine runs in this browser and only accepts read-only SQL.
+                  </p>
+                </div>
+                <div className="sql-toolbar-badges">
+                  <Badge variant="secondary">DuckDB-WASM</Badge>
+                  <Badge variant="outline">Read only</Badge>
+                  <Badge variant="outline">10,000 row preview</Badge>
+                </div>
+              </div>
+
+              <div className="sql-workbench">
+                <section className="sql-panel sql-editor-panel">
+                  <header>
+                    <div className="panel-title">
+                      <SquareTerminal />
+                      <div>
+                        <strong>Query editor</strong>
+                        <small>Press Ctrl/⌘ + Enter to run</small>
+                      </div>
+                    </div>
+                    <div className="sql-actions">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={resetSqlEngine}
+                        disabled={sqlRunning}
+                      >
+                        <RefreshCw /> Reset
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={executeLocalSql}
+                        disabled={sqlRunning}
+                      >
+                        {sqlRunning ? (
+                          <LoaderCircle className="animate-spin" />
+                        ) : (
+                          <SquareTerminal />
+                        )}
+                        Run query
+                      </Button>
+                    </div>
+                  </header>
+                  <textarea
+                    className="sql-editor"
+                    aria-label="SQL query"
+                    spellCheck={false}
+                    value={sqlText}
+                    onChange={(event) => setSqlText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (
+                        (event.ctrlKey || event.metaKey) &&
+                        event.key === 'Enter'
+                      ) {
+                        event.preventDefault();
+                        void executeLocalSql();
+                      }
+                    }}
+                  />
+
+                  <div className="sql-source-section">
+                    <div className="sql-section-heading">
+                      <span>Available tables</span>
+                      <small>
+                        Empty tables are loaded after they receive a row.
+                      </small>
+                    </div>
+                    <div className="sql-chip-list">
+                      {report.tables.map((table) => (
+                        <button
+                          type="button"
+                          key={table.id}
+                          onClick={() =>
+                            setSqlText(
+                              `SELECT *\nFROM "${table.name.replaceAll('"', '""')}"\nLIMIT 100`,
+                            )
+                          }
+                        >
+                          <Database />
+                          <span>{table.name}</span>
+                          <small>
+                            {(
+                              materialized.get(table.id)?.length ?? 0
+                            ).toLocaleString()}
+                          </small>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="sql-source-section sql-history-section">
+                    <div className="sql-section-heading">
+                      <span>Session history</span>
+                      <small>{sqlHistory.length} saved queries</small>
+                    </div>
+                    {sqlHistory.length ? (
+                      <div className="sql-history-list">
+                        {sqlHistory.map((query, index) => (
+                          <button
+                            type="button"
+                            key={`${query}-${index}`}
+                            onClick={() => setSqlText(query)}
+                          >
+                            <SquareTerminal />
+                            <code>{query.replace(/\s+/g, ' ')}</code>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="sql-empty-copy">
+                        Successful queries appear here for this session.
+                      </p>
+                    )}
+                  </div>
+                </section>
+
+                <section className="sql-panel sql-result-panel">
+                  <header>
+                    <div className="panel-title">
+                      <Table2 />
+                      <div>
+                        <strong>Results</strong>
+                        <small>
+                          {sqlResult
+                            ? `${sqlResult.rows.length.toLocaleString()} rows · ${sqlResult.durationMs.toFixed(1)} ms`
+                            : 'Run a query to inspect its result set'}
+                        </small>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!canEdit || !sqlResult?.rows.length}
+                      onClick={addSqlResultToModel}
+                    >
+                      <Plus /> Add to model
+                    </Button>
+                  </header>
+
+                  {sqlError && (
+                    <div className="sql-error" role="alert">
+                      <strong>Query failed</strong>
+                      <span>{sqlError}</span>
+                    </div>
+                  )}
+
+                  {sqlRunning && (
+                    <div className="sql-running">
+                      <LoaderCircle className="animate-spin" />
+                      Loading report tables and executing locally…
+                    </div>
+                  )}
+
+                  {!sqlRunning && sqlResult && (
+                    <>
+                      <div className="sql-result-meta">
+                        <Badge variant="outline">
+                          DuckDB {sqlResult.engineVersion}
+                        </Badge>
+                        {sqlResult.truncated && (
+                          <Badge variant="secondary">
+                            Preview truncated at 10,000 rows
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="sql-result-scroll">
+                        <table>
+                          <thead>
+                            <tr>
+                              {sqlResult.columns.map((column) => (
+                                <th key={column}>{column}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sqlResult.rows.map((row, rowIndex) => (
+                              <tr key={rowIndex}>
+                                {sqlResult.columns.map((column) => (
+                                  <td key={column}>
+                                    {row[column] === null ||
+                                    row[column] === undefined
+                                      ? '—'
+                                      : String(row[column])}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+
+                  {!sqlRunning && !sqlResult && !sqlError && (
+                    <div className="sql-result-empty">
+                      <SquareTerminal />
+                      <strong>Ready for local SQL</strong>
+                      <p>
+                        Select a table shortcut or write SELECT, WITH, SHOW,
+                        DESCRIBE, or EXPLAIN SQL.
+                      </p>
+                    </div>
+                  )}
                 </section>
               </div>
             </div>

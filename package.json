@@ -1,13 +1,13 @@
 {
-  "name": "locallens-bi",
-  "version": "0.2.0",
+  "name": "pivora",
+  "version": "0.3.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "vinext dev",
-    "build": "vinext build",
+    "build": "vinext build && node scripts/split-large-wasm.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "start:local": "wrangler dev --config dist/server/wrangler.json --ip 127.0.0.1 --port 4173",
     "test": "tsx --test lib/*.test.ts",
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
+    "@duckdb/duckdb-wasm": "^1.33.1-dev57.0",
     "@shadcn/react": "0.3.0",
     "@tanstack/react-virtual": "^3.14.10",
     "class-variance-authority": "0.7.1",

@@ -1,4 +1,4 @@
-# Contributing to LocalLens BI
+# Contributing to Pivora
 
 Thank you for helping make local-first analytics better.
 
@@ -13,8 +13,8 @@ Thank you for helping make local-first analytics better.
 ## Development setup
 
 ```bash
-git clone https://github.com/mohui666/locallens-bi.git
-cd locallens-bi
+git clone https://github.com/mohui666/pivora.git
+cd pivora
 npm install
 npm run dev
 ```
@@ -33,7 +33,7 @@ Please include:
 - The chosen behavior and notable tradeoffs
 - Test coverage or a concise manual verification procedure
 - Screenshots for visible UI changes
-- Any impact on local data, IndexedDB, file permissions, or `.llbi` compatibility
+- Any impact on local data, IndexedDB, file permissions, `.pivora`, or legacy `.llbi` compatibility
 
 ## Project structure
 

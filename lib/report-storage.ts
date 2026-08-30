@@ -1,6 +1,8 @@
 import type { ReportDocument, ReportSummary } from './bi-types';
 import { upgradeReport } from './report-schema';
 
+// Preserve the original storage identifier so the Pivora rebrand never hides
+// reports that users already saved locally.
 const DATABASE = 'locallens-bi';
 const STORE = 'reports';
 

@@ -11,6 +11,8 @@ export type SourceKind =
   | 'json'
   | 'xml'
   | 'parquet'
+  | 'web'
+  | 'sql'
   | 'excel'
   | 'sqlite';
 export type ChartKind =
@@ -131,6 +133,16 @@ export type ReportFilter = {
   sourceWidgetId?: string;
 };
 
+export type RoleRule = {
+  id: string;
+  role: Exclude<ReportRole, 'owner'>;
+  tableId: string;
+  field: string;
+  operator: QueryOperator;
+  value: string;
+  enabled: boolean;
+};
+
 export type WidgetLayout = {
   x: number;
   y: number;
@@ -190,7 +202,7 @@ export type ReportTheme = {
 };
 
 export type ReportDocument = {
-  schemaVersion: 3;
+  schemaVersion: 4;
   id: string;
   name: string;
   createdAt: string;
@@ -206,6 +218,7 @@ export type ReportDocument = {
   measures: SemanticMeasure[];
   transforms: ColumnTransform[];
   querySteps: QueryStep[];
+  roleRules: RoleRule[];
   filters: ReportFilter[];
   widgets: ChartWidget[];
 };

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  analyzeRelationship,
   applyCalculatedFields,
   applyQuerySteps,
   applyTransforms,
@@ -133,6 +134,36 @@ void test('materializes lookup fields and applies cross-table filters', () => {
   );
 });
 
+void test('applies role row rules and lets owners bypass preview filtering', () => {
+  const rows = materializeTable({
+    tableId: sales.id,
+    tables: [sales, products],
+    relationships: [relationship],
+    transforms: [],
+    calculatedFields: [],
+  });
+  const rules = [
+    {
+      id: 'viewer-hardware',
+      role: 'viewer' as const,
+      tableId: products.id,
+      field: 'category',
+      operator: 'equals' as const,
+      value: 'Hardware',
+      enabled: true,
+    },
+  ];
+
+  assert.deepEqual(
+    filterRows(rows, [], sales.id, [sales, products], rules, 'viewer'),
+    [rows[0]],
+  );
+  assert.equal(
+    filterRows(rows, [], sales.id, [sales, products], rules, 'owner').length,
+    2,
+  );
+});
+
 void test('validates relationship table and key selection', () => {
   assert.equal(validateRelationship(relationship, [sales, products]), null);
   assert.equal(
@@ -142,6 +173,27 @@ void test('validates relationship table and key selection', () => {
     ),
     'Choose two different tables.',
   );
+});
+
+void test('diagnoses relationship cardinality and unmatched keys', () => {
+  const duplicateProducts: DataTable = {
+    ...products,
+    rows: [
+      ...products.rows,
+      { id: 'p2', category: 'Duplicate' },
+      { id: 'p3', category: 'Unmatched' },
+    ],
+  };
+  const diagnostic = analyzeRelationship(
+    { ...relationship, cardinality: 'many-to-one' },
+    [sales, duplicateProducts],
+  );
+
+  assert.equal(diagnostic.status, 'invalid');
+  assert.equal(diagnostic.cardinalityValid, false);
+  assert.equal(diagnostic.rightDuplicates, 1);
+  assert.equal(diagnostic.unmatchedRight, 1);
+  assert.equal(diagnostic.matchRate, 1);
 });
 
 void test('respects relationship direction and expands many-to-many matches', () => {
