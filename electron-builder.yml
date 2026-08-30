@@ -1,0 +1,43 @@
+appId: io.github.mohui666.pivora
+productName: Pivora
+copyright: Copyright © 2026 Pivora contributors
+asar: true
+npmRebuild: false
+directories:
+  output: release
+  buildResources: desktop/assets
+files:
+  - desktop/main.mjs
+  - desktop/preload.cjs
+  - desktop/runtime-runner.cjs
+  - desktop/error.html
+  - package.json
+  - "!node_modules/**/*"
+extraResources:
+  - from: dist
+    to: dist
+    filter:
+      - "**/*"
+  - from: desktop/runtime/node_modules
+    to: runtime/node_modules
+    filter:
+      - "**/*"
+win:
+  icon: icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Pivora
+  artifactName: Pivora-Setup-${version}-${arch}.${ext}
+portable:
+  artifactName: Pivora-Portable-${version}-${arch}.${ext}
+  requestExecutionLevel: user

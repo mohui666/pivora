@@ -11,6 +11,7 @@
     <img alt="Local first" src="https://img.shields.io/badge/data-local--first-0f766e?style=flat-square" />
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.9-3178c6?style=flat-square&logo=typescript&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white" />
+    <a href="https://github.com/mohui666/pivora/actions/workflows/desktop.yml"><img alt="Windows desktop" src="https://github.com/mohui666/pivora/actions/workflows/desktop.yml/badge.svg" /></a>
     <img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-8b5cf6?style=flat-square" />
   </p>
 </div>
@@ -30,22 +31,23 @@ There is no account, telemetry pipeline, hosted database, or cloud deployment re
 
 ## Highlights
 
-|     | Capability               | What it gives you                                                                                        |
-| --- | ------------------------ | -------------------------------------------------------------------------------------------------------- |
-| 📥  | **Multi-format import**  | CSV, JSON, XML, Parquet, Excel, SQLite, folders, and explicit Web/API GET                                |
-| 🧹  | **Data preparation**     | 14 ordered query operations, including merge, append, pivot, unpivot, cleaning, profiling, and previews  |
-| 🧩  | **Semantic modeling**    | Four cardinalities, diagnostics, formulas, measures, what-if parameters, and curated column metadata     |
-| 📊  | **Visual authoring**     | 14 visuals, hierarchies, drillthrough, conditional scales, secondary measures, sorting, and Top N        |
+|     | Capability               | What it gives you                                                                                           |
+| --- | ------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| 📥  | **Multi-format import**  | CSV, JSON, XML, Parquet, Excel, SQLite, folders, and explicit Web/API GET                                   |
+| 🧹  | **Data preparation**     | 14 ordered query operations, including merge, append, pivot, unpivot, cleaning, profiling, and previews     |
+| 🧩  | **Semantic modeling**    | Four cardinalities, diagnostics, formulas, measures, what-if parameters, and curated column metadata        |
+| 📊  | **Visual authoring**     | 14 visuals, hierarchies, drillthrough, conditional scales, secondary measures, sorting, and Top N           |
 | ✨  | **Report authoring**     | Multi-page canvas, auto-snap or overlapping freeform layout, scoped filters, interactions, themes, and undo |
-| 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                           |
-| 🛟  | **Workspace recovery**   | Reopen the last active report and restore from up to 30 compressed manual/automatic local checkpoints    |
-| 🧱  | **Report templates**     | Start blank or use guided retail, executive, and live scenario-planning report structures                |
-| 🧠  | **Local SQL workbench**  | Read-only DuckDB-WASM queries over materialized report tables, with history and reusable results         |
-| 📦  | **Portable output**      | Import/export `.pivora` (plus legacy `.llbi`), active-page PNG, and multi-page PDF                       |
-| ⏱️  | **Performance analyzer** | Measure local aggregation time, input rows, and output points for every visual on a page                 |
-| 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals                              |
-| 👥  | **Role-aware preview**   | Owner, Editor, Viewer, and field/operator row rules that also constrain local SQL                        |
-| 🌗  | **Refined UI**           | Responsive layout, dark mode, accessible controls, and a ready-to-use sample report                      |
+| 💾  | **Local report library** | Autosave and reopen complete reports through browser IndexedDB                                              |
+| 🛟  | **Workspace recovery**   | Reopen the last active report and restore from up to 30 compressed manual/automatic local checkpoints       |
+| 🧱  | **Report templates**     | Start blank or use guided retail, executive, and live scenario-planning report structures                   |
+| 🖥️  | **Windows desktop**      | Signed-ready installer and portable app with an embedded private localhost runtime                          |
+| 🧠  | **Local SQL workbench**  | Read-only DuckDB-WASM queries over materialized report tables, with history and reusable results            |
+| 📦  | **Portable output**      | Import/export `.pivora` (plus legacy `.llbi`), active-page PNG, and multi-page PDF                          |
+| ⏱️  | **Performance analyzer** | Measure local aggregation time, input rows, and output points for every visual on a page                    |
+| 🔄  | **Source refresh**       | Manual refresh or 30-second, 1-minute, and 5-minute local refresh intervals                                 |
+| 👥  | **Role-aware preview**   | Owner, Editor, Viewer, and field/operator row rules that also constrain local SQL                           |
+| 🌗  | **Refined UI**           | Responsive layout, dark mode, accessible controls, and a ready-to-use sample report                         |
 
 ## See the workflow
 
@@ -62,6 +64,12 @@ flowchart LR
 ```
 
 ## Quick start
+
+### Windows desktop
+
+Download either `Pivora-Setup-*.exe` or `Pivora-Portable-*.exe` from [GitHub Releases](https://github.com/mohui666/pivora/releases). The desktop build includes its own local engine; Node.js, a separate browser, an account, and a cloud service are not required.
+
+The installer preserves Pivora's local application data when uninstalling. The portable executable stores reports in the current Windows user's Pivora application-data directory, so moving or replacing the `.exe` does not erase saved reports.
 
 ### Requirements
 
@@ -94,6 +102,16 @@ http://127.0.0.1:4173
 ```
 
 No Sites binding, hosted service, or external database is required.
+
+### Build the Windows desktop app
+
+```bash
+npm run desktop:dir   # unpacked application for local inspection
+npm run desktop:dist  # NSIS installer + portable executable
+npm run desktop:smoke # launch and verify the packaged application
+```
+
+Desktop artifacts are written to `release/`. The packaged application owns the fixed loopback origin `http://127.0.0.1:4173`; if another process already uses that port, Pivora fails closed and displays a retryable diagnostics page instead of loading an unknown local service.
 
 ## Build your first report
 
@@ -135,43 +153,49 @@ Example calculated fields:
 ## Architecture
 
 ```text
-Browser
-├── Import adapters
-│   ├── Papa Parse        → CSV
-│   ├── SheetJS           → Excel
-│   ├── JSON parser       → JSON collections
-│   ├── DOM parser        → XML collections
-│   ├── Hyparquet         → Parquet + compression codecs
-│   ├── sql.js + WASM     → SQLite
-│   └── explicit fetch    → Web/API JSON, CSV, and XML
-├── Local semantic engine
-│   ├── transforms
-│   ├── ordered query steps
-│   ├── relationships
-│   ├── calculated fields
-│   ├── reusable measures
-│   ├── column metadata
-│   ├── what-if parameters
-│   ├── quick calculations
-│   ├── relationship diagnostics
-│   ├── role row rules
-│   ├── scoped filter contexts and visual interaction rules
-│   └── drillthrough transfer
-├── DuckDB-WASM workbench
-│   ├── read-only SQL worker
-│   ├── query history
-│   └── reusable result tables
-├── React analytics studio
-│   ├── responsive grid canvas
-│   ├── 14 Recharts/CSS visuals
-│   ├── pages, bookmarks, themes, drillthrough, and synced slicers
-│   ├── column quality and distribution profiler
-│   └── visual inspector
-└── Local persistence
-    ├── IndexedDB report library
-    ├── last-workspace recovery and 30-version local history
-    ├── .pivora bundles
-    └── PNG / PDF exports
+Pivora
+├── Optional Electron desktop shell
+│   ├── sandboxed renderer with Node.js disabled
+│   ├── loopback-only Utility Process runtime
+│   ├── startup health check and diagnostics log
+│   └── NSIS installer + portable Windows target
+└── Browser application
+    ├── Import adapters
+    │   ├── Papa Parse        → CSV
+    │   ├── SheetJS           → Excel
+    │   ├── JSON parser       → JSON collections
+    │   ├── DOM parser        → XML collections
+    │   ├── Hyparquet         → Parquet + compression codecs
+    │   ├── sql.js + WASM     → SQLite
+    │   └── explicit fetch    → Web/API JSON, CSV, and XML
+    ├── Local semantic engine
+    │   ├── transforms
+    │   ├── ordered query steps
+    │   ├── relationships
+    │   ├── calculated fields
+    │   ├── reusable measures
+    │   ├── column metadata
+    │   ├── what-if parameters
+    │   ├── quick calculations
+    │   ├── relationship diagnostics
+    │   ├── role row rules
+    │   ├── scoped filter contexts and visual interaction rules
+    │   └── drillthrough transfer
+    ├── DuckDB-WASM workbench
+    │   ├── read-only SQL worker
+    │   ├── query history
+    │   └── reusable result tables
+    ├── React analytics studio
+    │   ├── responsive grid canvas
+    │   ├── 14 Recharts/CSS visuals
+    │   ├── pages, bookmarks, themes, drillthrough, and synced slicers
+    │   ├── column quality and distribution profiler
+    │   └── visual inspector
+    └── Local persistence
+        ├── IndexedDB report library
+        ├── last-workspace recovery and 30-version local history
+        ├── .pivora bundles
+        └── PNG / PDF exports
 ```
 
 ### Core modules
@@ -184,7 +208,7 @@ Browser
 | [`lib/bi-model.ts`](./lib/bi-model.ts)                               | Transforms, formulas, relationships, materialization, and filters  |
 | [`lib/report-storage.ts`](./lib/report-storage.ts)                   | IndexedDB persistence and report library                           |
 | [`lib/report-schema.ts`](./lib/report-schema.ts)                     | Backward-compatible report upgrades and built-in themes            |
-| [`lib/grid-layout.ts`](./lib/grid-layout.ts)                         | Layout modes, geometry conversion, bounds, and recovery             |
+| [`lib/grid-layout.ts`](./lib/grid-layout.ts)                         | Layout modes, geometry conversion, bounds, and recovery            |
 | [`components/bi/chart-visual.tsx`](./components/bi/chart-visual.tsx) | Fourteen visual types and interaction handling                     |
 | [`lib/sample-report.ts`](./lib/sample-report.ts)                     | Complete sample dataset, model, and dashboard                      |
 
@@ -199,6 +223,9 @@ Pivora is built around a small trust boundary:
 - Exported report bundles contain the report data by design—treat them like the source files.
 - Owner, Editor, and Viewer are local workflow guards, not multi-user authentication or server authorization.
 - File refresh permission lasts only while the browser retains access to the selected handles.
+- The desktop renderer runs with context isolation and Chromium sandboxing, with Node.js integration disabled and all permission requests denied.
+- The desktop shell accepts only the Pivora loopback origin in-app; external HTTP(S) links are handed to the operating-system browser, while pop-up windows, webviews, and non-HTTP navigation are blocked.
+- The embedded worker binds only to `127.0.0.1`, validates the Pivora response before loading it, and is terminated with its Workerd children when the desktop window closes.
 
 ## Performance boundaries
 
@@ -209,9 +236,10 @@ For datasets that exceed the browser's practical memory budget, reduce the sourc
 ## Quality gates
 
 ```bash
-npm test       # 34 focused checks for analytics, imports, schema, recovery, and layout modes
-npm run lint   # type-aware lint and React checks
-npm run build  # production build
+npm test          # 36 focused checks for analytics, imports, schema, recovery, and layout modes
+npm run lint      # type-aware lint, React checks, and desktop-process checks
+npm run build     # production web build
+npm run desktop:smoke # packaged Windows startup and shutdown probe
 ```
 
 The current suite covers the core analytics and import paths with Node's native test runner.
@@ -252,6 +280,7 @@ These constraints keep the project private-by-default, understandable, and easy 
 - [x] Add last-workspace crash recovery and retained local version checkpoints
 - [x] Add blank, guided retail, executive, and scenario-planning report templates
 - [x] Add stable table resizing, explicit table switching, and auto-snap/freeform canvas modes
+- [x] Add local Windows installer/portable builds with sandboxing, startup diagnostics, and packaged smoke tests
 - [ ] Add ODBC-style bridge and data-lake connectors
 - [ ] Add repeatable end-to-end browser tests for import, authoring, and export flows
 - [ ] Add internationalization

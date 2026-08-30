@@ -1,7 +1,12 @@
 {
   "name": "pivora",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
+  "description": "A local-first open-source analytics and BI studio",
+  "license": "MIT",
+  "author": "Pivora contributors",
+  "repository": "https://github.com/mohui666/pivora",
+  "main": "desktop/main.mjs",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -10,8 +15,13 @@
     "build": "vinext build && node scripts/split-large-wasm.mjs",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "start:local": "wrangler dev --config dist/server/wrangler.json --ip 127.0.0.1 --port 4173",
+    "desktop": "npm run build && npm run desktop:runtime && electron .",
+    "desktop:runtime": "node scripts/prepare-desktop-runtime.mjs",
+    "desktop:dir": "npm run build && npm run desktop:runtime && electron-builder --win --dir",
+    "desktop:dist": "npm run build && npm run desktop:runtime && electron-builder --win",
+    "desktop:smoke": "node scripts/smoke-desktop.mjs",
     "test": "tsx --test lib/*.test.ts",
-    "lint": "oxlint app lib components/bi components/ui/badge.tsx components/ui/button.tsx components/ui/input.tsx components/ui/native-select.tsx",
+    "lint": "oxlint app lib desktop scripts components/bi components/ui/badge.tsx components/ui/button.tsx components/ui/input.tsx components/ui/native-select.tsx",
     "format": "oxfmt"
   },
   "dependencies": {
@@ -57,6 +67,8 @@
     "@types/sql.js": "^1.4.11",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
+    "electron": "44.0.0",
+    "electron-builder": "26.15.3",
     "hyparquet-writer": "^0.16.9",
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
