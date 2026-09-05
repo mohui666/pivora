@@ -846,6 +846,24 @@ export default function Home() {
     report.querySteps,
   ]);
 
+  const sqlTables = useMemo(
+    () => {
+      if (view !== 'sql') return [];
+      return report.tables.map((table) => ({
+        ...table,
+        rows: filterRows(
+          materialized.get(table.id) ?? table.rows,
+          [],
+          table.id,
+          report.tables,
+          report.roleRules,
+          report.role,
+        ),
+      }));
+    },
+    [view, materialized, report.tables, report.roleRules, report.role],
+  );
+
   const fieldsFor = useCallback(
     (tableId: string) => materializedFields(materialized.get(tableId) ?? []),
     [materialized],
@@ -2104,18 +2122,7 @@ export default function Home() {
     setSqlError('');
     try {
       const { runLocalSql } = await import('@/lib/duckdb-engine');
-      const tables = report.tables.map((table) => ({
-        ...table,
-        rows: filterRows(
-          materialized.get(table.id) ?? table.rows,
-          [],
-          table.id,
-          report.tables,
-          report.roleRules,
-          report.role,
-        ),
-      }));
-      const result = await runLocalSql(tables, sqlText);
+      const result = await runLocalSql(sqlTables, sqlText);
       setSqlResult(result);
       setSqlHistory((history) =>
         [sqlText, ...history.filter((query) => query !== sqlText)].slice(0, 12),

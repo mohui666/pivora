@@ -22,9 +22,21 @@ const bundles: duckdb.DuckDBBundles = {
 };
 
 let enginePromise: Promise<duckdb.AsyncDuckDB> | undefined;
-const loadedTableNames = new Set<string>();
+// Report rows are immutable; unchanged queries can reuse the imported tables.
+const loadedTables = new Map<string, Pick<DataTable, 'id' | 'rows'>>();
+let operationTail: Promise<unknown> = Promise.resolve();
 const generatedModuleUrls = new Set<string>();
 const ARROW_BIG_NUM = Symbol.for('isArrowBigNum');
+
+function runSqlOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const result = operationTail.then(operation);
+  // The caller receives the rejection; subsequent queries may still run.
+  operationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
@@ -119,32 +131,42 @@ async function hydrateTables(
 ) {
   const connection = await database.connect();
   try {
-    for (const previous of loadedTableNames) {
+    const currentTables = new Map(tables.map((table) => [table.name, table]));
+    for (const [name, previous] of loadedTables) {
+      const current = currentTables.get(name);
+      if (current?.id === previous.id && current.rows === previous.rows) continue;
       await connection.query(
-        `DROP TABLE IF EXISTS ${quoteIdentifier(previous)}`,
+        `DROP TABLE IF EXISTS ${quoteIdentifier(name)}`,
       );
+      loadedTables.delete(name);
     }
-    loadedTableNames.clear();
-    await database.dropFiles();
     for (const table of tables) {
       // DuckDB cannot infer a schema from an empty JSON array. Empty model
       // tables stay in the report and become queryable as soon as they contain
       // at least one row.
-      if (!table.rows.length) continue;
+      const loaded = loadedTables.get(table.name);
+      if (
+        !table.rows.length ||
+        (loaded?.id === table.id && loaded.rows === table.rows)
+      ) continue;
       const path = `pivora-${table.id}.json`;
       await database.registerFileText(path, jsonWithBigInts(table.rows));
-      await connection.insertJSONFromPath(path, {
-        schema: 'main',
-        name: table.name,
-      });
-      loadedTableNames.add(table.name);
+      try {
+        await connection.insertJSONFromPath(path, {
+          schema: 'main',
+          name: table.name,
+        });
+        loadedTables.set(table.name, { id: table.id, rows: table.rows });
+      } finally {
+        await database.dropFile(path);
+      }
     }
   } finally {
     await connection.close();
   }
 }
 
-export async function runLocalSql(
+async function executeLocalSql(
   tables: DataTable[],
   sql: string,
 ): Promise<LocalSqlResult> {
@@ -185,12 +207,23 @@ export async function runLocalSql(
   }
 }
 
-export async function resetLocalSqlEngine(): Promise<void> {
+async function resetEngine(): Promise<void> {
   if (!enginePromise) return;
   const database = await enginePromise;
   await database.terminate();
   enginePromise = undefined;
-  loadedTableNames.clear();
+  loadedTables.clear();
   for (const url of generatedModuleUrls) URL.revokeObjectURL(url);
   generatedModuleUrls.clear();
+}
+
+export function runLocalSql(
+  tables: DataTable[],
+  sql: string,
+): Promise<LocalSqlResult> {
+  return runSqlOperation(() => executeLocalSql(tables, sql));
+}
+
+export function resetLocalSqlEngine(): Promise<void> {
+  return runSqlOperation(resetEngine);
 }
